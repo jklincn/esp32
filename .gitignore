@@ -1,0 +1,14 @@
+build/
+sdkconfig
+sdkconfig.old
+
+# ESP-IDF Component Manager generated files
+managed_components/
+dependencies.lock
+
+# Local cache
+.cache/
+.pytest_cache/
+
+# VSCode local settings
+.vscode/
