@@ -12,3 +12,5 @@ dependencies.lock
 
 # VSCode local settings
 .vscode/
+
+.clangd

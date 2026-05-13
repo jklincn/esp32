@@ -11,6 +11,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "nvs_config.h"
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1

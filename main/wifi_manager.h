@@ -2,11 +2,6 @@
 
 #include <stdbool.h>
 #include "esp_err.h"
-#include "nvs_config.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 typedef enum {
     WIFI_MANAGER_MODE_CONFIG = 0,
@@ -35,7 +30,3 @@ esp_err_t wifi_manager_verify_and_save(const char *ssid,
                                         wifi_manager_connect_result_t *result);
 void wifi_manager_schedule_ap_shutdown(void);
 void wifi_manager_get_status(wifi_manager_status_t *status);
-
-#ifdef __cplusplus
-}
-#endif
