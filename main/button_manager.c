@@ -25,44 +25,72 @@ static bool button_is_pressed(void)
 static void button_task(void *arg)
 {
     (void)arg;
-    bool was_pressed = false;
-    TickType_t pressed_at = 0;
-    bool long_press_hint_logged = false;
+    TickType_t press_start_tick = 0;
 
+    // 用于判断“刚按下”和“刚松开”。
+    bool last_pressed = false;
+    
+    /*
+     * BOOT 按键接在 GPIO9 和 GND 之间，是低电平有效：
+     *   - 松开：GPIO9 为高电平，button_is_pressed() 返回 false
+     *   - 按下：GPIO9 为低电平，button_is_pressed() 返回 true
+     *
+     * GPIO9 也是启动模式选择引脚，所以重启操作放在“松开后”执行，
+     * 避免按住 BOOT 时重启导致芯片进入下载模式。
+     *
+     * 行为：
+     *   - 按住 >= 1 秒后松开：重启
+     *   - 按住 >= 5 秒后松开：清除 Wi-Fi 配置并重启
+     */
     while (true) {
+        // 读取当前按钮状态。
         bool pressed = button_is_pressed();
+
+        // 获取当前系统 tick。
         TickType_t now = xTaskGetTickCount();
 
-        if (pressed && !was_pressed) {
-            pressed_at = now;
-            long_press_hint_logged = false;
+        // 当前按下、上一轮未按下，说明刚刚按下。
+        if (pressed && !last_pressed) {
+            // 记录按下开始时间。
+            press_start_tick = now;
+
             ESP_LOGI(TAG, "BOOT button pressed");
-        } else if (pressed && was_pressed && !long_press_hint_logged) {
-            uint32_t held_ms = pdTICKS_TO_MS(now - pressed_at);
-            if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
-                ESP_LOGW(TAG, "BOOT button held for 5s, release to clear Wi-Fi config and restart");
-                long_press_hint_logged = true;
-            }
-        } else if (!pressed && was_pressed) {
-            uint32_t held_ms = pdTICKS_TO_MS(now - pressed_at);
+        }
+
+        // 当前松开、上一轮按下，说明刚刚松开。
+        if (!pressed && last_pressed) {
+            // 计算本次按住时间，单位为毫秒。
+            uint32_t held_ms = pdTICKS_TO_MS(now - press_start_tick);
+
             ESP_LOGI(TAG, "BOOT button released, held=%" PRIu32 " ms", held_ms);
 
+            // 长按 5 秒：清除 Wi-Fi 配置并重启。
             if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
                 ESP_LOGW(TAG, "clearing Wi-Fi config by BOOT button long press");
+
                 esp_err_t err = nvs_config_clear_wifi();
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "clear Wi-Fi config failed: %s", esp_err_to_name(err));
                 }
+
+                // 延迟 200ms，给日志输出和系统处理留一点时间
                 vTaskDelay(pdMS_TO_TICKS(200));
                 esp_restart();
-            } else if (held_ms >= BUTTON_RESTART_MS) {
+            }
+
+            // 长按 1 秒：普通重启。
+            else if (held_ms >= BUTTON_RESTART_MS) {
                 ESP_LOGI(TAG, "restarting by BOOT button press");
+
                 vTaskDelay(pdMS_TO_TICKS(200));
                 esp_restart();
             }
         }
 
-        was_pressed = pressed;
+        // 保存当前状态，下一轮用来判断状态变化。
+        last_pressed = pressed;
+
+        // 每隔 BUTTON_POLL_MS 毫秒轮询一次按钮。
         vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
     }
 }

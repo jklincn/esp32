@@ -11,17 +11,30 @@
 #include "nvs_config.h"
 #include "wifi_manager.h"
 
+/* POST /api/wifi_config 的表单体上限。当前只包含 ssid/password，256 字节足够且可防止异常大请求占内存。 */
 #define WIFI_FORM_MAX_BODY_LEN 256
 
 static const char *TAG = "web_server";
+
+/* HTTP server 句柄；非 NULL 表示服务已经启动。 */
 static httpd_handle_t s_server;
 
+/*
+ * Wi-Fi 配置请求的异步任务参数。
+ * httpd_req_t 通过 httpd_req_async_handler_begin() 延长生命周期，任务完成后必须调用
+ * httpd_req_async_handler_complete() 归还给 HTTP server。
+ */
 typedef struct {
     httpd_req_t *req;
     char ssid[WIFI_CFG_MAX_SSID_LEN + 1];
     char password[WIFI_CFG_MAX_PASSWORD_LEN + 1];
 } wifi_config_job_t;
 
+/*
+ * 内置配网页面。
+ * 页面直接放在固件中，避免依赖 SPIFFS/LittleFS；前端通过 /api/status 轮询状态，
+ * 通过 /api/wifi_config 提交 SSID/密码。
+ */
 static const char INDEX_HTML[] =
     "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
@@ -108,6 +121,7 @@ static const char INDEX_HTML[] =
     "loadStatus();setInterval(loadStatus,5000);"
     "</script></body></html>";
 
+/* 发送 JSON 响应，并把常用状态码转换为 ESP HTTP server 需要的状态字符串。 */
 static void send_json(httpd_req_t *req, int status_code, const char *json)
 {
     const char *status = "200 OK";
@@ -127,6 +141,7 @@ static void send_json(httpd_req_t *req, int status_code, const char *json)
     }
 }
 
+/* 把单个十六进制字符转换为 0..15；非法字符返回 -1。 */
 static int hex_value(char c)
 {
     if (c >= '0' && c <= '9') {
@@ -141,6 +156,10 @@ static int hex_value(char c)
     return -1;
 }
 
+/*
+ * 解码 application/x-www-form-urlencoded 中的字段值。
+ * '+' 代表空格，'%XX' 代表一个字节；输出缓冲区不够时返回 false。
+ */
 static bool url_decode(const char *src, char *dst, size_t dst_len)
 {
     size_t out = 0;
@@ -164,11 +183,16 @@ static bool url_decode(const char *src, char *dst, size_t dst_len)
     return true;
 }
 
+/*
+ * 解析 Wi-Fi 配置表单。
+ * body 会被 strtok_r() 原地切分，因此调用方传入的缓冲区不应再作为原始字符串使用。
+ */
 static bool parse_wifi_form(char *body, char *ssid, size_t ssid_len, char *password, size_t password_len)
 {
     ssid[0] = '\0';
     password[0] = '\0';
 
+    /* 表单格式形如 ssid=xxx&password=yyy；未知字段直接忽略，便于以后扩展。 */
     char *save_ptr = NULL;
     for (char *pair = strtok_r(body, "&", &save_ptr); pair != NULL; pair = strtok_r(NULL, "&", &save_ptr)) {
         char *eq = strchr(pair, '=');
@@ -193,9 +217,11 @@ static bool parse_wifi_form(char *body, char *ssid, size_t ssid_len, char *passw
         }
     }
 
+    /* 当前策略要求 SSID 和密码都非空；开放网络不会通过这里。 */
     return ssid[0] != '\0' && password[0] != '\0';
 }
 
+/* GET /：返回内置 HTML 配网页面。 */
 static esp_err_t index_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -206,6 +232,7 @@ static esp_err_t index_handler(httpd_req_t *req)
     return err;
 }
 
+/* GET /api/status：返回当前 Wi-Fi 状态，供页面轮询刷新。 */
 static esp_err_t status_handler(httpd_req_t *req)
 {
     wifi_manager_status_t status;
@@ -223,9 +250,19 @@ static esp_err_t status_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/*
+ * Wi-Fi 验证任务。
+ * 连接路由器最多可能阻塞十几秒，不能直接在 HTTP server 工作线程里执行，
+ * 否则会影响其他请求处理；因此 handler 只读取请求并创建该任务。
+ */
 static void wifi_config_task(void *arg)
 {
     wifi_config_job_t *job = (wifi_config_job_t *)arg;
+
+    /*
+     * verify_and_save 会先连接验证，成功后保存 NVS；失败不会覆盖已有配置。
+     * 任务里根据错误类型返回不同 JSON，前端据此显示成功、失败或并发冲突。
+     */
     wifi_manager_connect_result_t result;
     esp_err_t err = wifi_manager_verify_and_save(job->ssid, job->password, &result);
 
@@ -236,6 +273,8 @@ static void wifi_config_task(void *arg)
                  result.ip);
         send_json(job->req, 200, json);
         httpd_req_async_handler_complete(job->req);
+
+        /* HTTP 成功响应发出后再延迟关闭 SoftAP，避免浏览器收不到结果。 */
         wifi_manager_schedule_ap_shutdown();
     } else if (err == ESP_ERR_INVALID_STATE) {
         send_json(job->req, 409, "{\"ok\":false,\"message\":\"Wi-Fi validation already running\"}");
@@ -249,14 +288,20 @@ static void wifi_config_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* POST /api/wifi_config：读取表单、创建异步任务验证并保存 Wi-Fi 配置。 */
 static esp_err_t wifi_config_handler(httpd_req_t *req)
 {
+    /* 拒绝空请求和过大的请求，避免无意义解析或栈上缓冲区溢出。 */
     if (req->content_len <= 0 || req->content_len >= WIFI_FORM_MAX_BODY_LEN) {
         ESP_LOGW(TAG, "invalid wifi_config body length=%d", req->content_len);
         send_json(req, 400, "{\"ok\":false,\"message\":\"Invalid request body\"}");
         return ESP_OK;
     }
 
+    /*
+     * httpd_req_recv() 可能一次读不完完整 body，因此按 remaining 循环读取。
+     * 末尾额外补 '\0'，方便后续按 C 字符串解析。
+     */
     char body[WIFI_FORM_MAX_BODY_LEN] = {0};
     int received = 0;
     int remaining = req->content_len;
@@ -275,6 +320,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
     }
     body[received] = '\0';
 
+    /* job 在异步任务结束时释放；如果创建任务失败，则在当前 handler 中释放。 */
     wifi_config_job_t *job = calloc(1, sizeof(*job));
     if (job == NULL) {
         ESP_LOGE(TAG, "alloc wifi_config job failed");
@@ -291,6 +337,9 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "received wifi_config request, ssid=%s", job->ssid);
 
+    /*
+     * 开启异步请求后，HTTP server 允许当前 handler 返回，后续由任务发送响应并 complete。
+     */
     esp_err_t err = httpd_req_async_handler_begin(req, &job->req);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "begin async HTTP request failed: %s", esp_err_to_name(err));
@@ -299,6 +348,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    /* 单独任务栈稍大一些，给 Wi-Fi 验证、JSON 拼接和日志留余量。 */
     BaseType_t ok = xTaskCreate(wifi_config_task, "wifi_cfg_task", 6144, job, 4, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "create wifi_config task failed");
@@ -312,12 +362,14 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
 
 esp_err_t web_server_start(void)
 {
+    /* 防止重复启动 HTTP server；重复调用视为成功。 */
     if (s_server != NULL) {
         ESP_LOGW(TAG, "HTTP server already started");
         return ESP_OK;
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    /* 启用 LRU 清理可在连接资源紧张时回收旧连接；栈大小按当前 handler 复杂度提高。 */
     config.lru_purge_enable = true;
     config.stack_size = 6144;
     config.max_uri_handlers = 8;
@@ -328,6 +380,7 @@ esp_err_t web_server_start(void)
         return err;
     }
 
+    /* 路由表使用局部 const 结构体注册；注册后 ESP HTTP server 会复制必要信息。 */
     const httpd_uri_t index_uri = {
         .uri = "/",
         .method = HTTP_GET,
