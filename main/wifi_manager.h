@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+
 #include "esp_err.h"
 
 /**
@@ -79,16 +80,17 @@ esp_err_t wifi_manager_enter_config_mode(void);
 /**
  * @brief 验证并保存新的 Wi-Fi 凭据。
  *
- * @param ssid 待验证的 Wi-Fi SSID，不能为空，长度不能超过 WIFI_CFG_MAX_SSID_LEN。
- * @param password 待验证的 Wi-Fi 密码，不能为空，长度不能超过 WIFI_CFG_MAX_PASSWORD_LEN。
+ * @param ssid 待验证的 Wi-Fi SSID，不能为空，长度不能超过
+ * WIFI_CFG_MAX_SSID_LEN。
+ * @param password 待验证的 Wi-Fi 密码，不能为空，长度不能超过
+ * WIFI_CFG_MAX_PASSWORD_LEN。
  * @param result 输出验证结果，不能为 NULL。
  *
  * 函数内部会串行化连接验证，避免多个 Web 请求同时改写 STA 配置。只有实际连接
  * 成功后才写入 NVS；验证失败不会覆盖原有配置。
  */
-esp_err_t wifi_manager_verify_and_save(const char *ssid,
-                                        const char *password,
-                                        wifi_manager_connect_result_t *result);
+esp_err_t wifi_manager_verify_and_save(const char *ssid, const char *password,
+                                       wifi_manager_connect_result_t *result);
 
 /**
  * @brief 安排异步关闭 SoftAP。

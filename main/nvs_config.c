@@ -7,21 +7,19 @@
 
 static const char *TAG = "nvs_config";
 
-static bool nvs_config_is_wifi_valid(const wifi_cfg_t *cfg)
-{
+static bool nvs_config_is_wifi_valid(const wifi_cfg_t *cfg) {
     if (cfg == NULL) {
         return false;
     }
 
-    return cfg->initialized &&
-           cfg->ssid[0] != '\0' &&
+    return cfg->initialized && cfg->ssid[0] != '\0' &&
            cfg->password[0] != '\0' &&
            strnlen(cfg->ssid, sizeof(cfg->ssid)) <= WIFI_CFG_MAX_SSID_LEN &&
-           strnlen(cfg->password, sizeof(cfg->password)) <= WIFI_CFG_MAX_PASSWORD_LEN;
+           strnlen(cfg->password, sizeof(cfg->password)) <=
+               WIFI_CFG_MAX_PASSWORD_LEN;
 }
 
-esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg)
-{
+esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg) {
     if (cfg == NULL) {
         ESP_LOGE(TAG, "load_wifi called with NULL cfg");
         return ESP_ERR_INVALID_ARG;
@@ -30,17 +28,19 @@ esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg)
     memset(cfg, 0, sizeof(*cfg));
 
     /*
-     * 只读打开 namespace。第一次启动或用户清除配置后，namespace/key 可能不存在，
-     * 这属于正常情况，调用方会据此进入配网模式。
+     * 只读打开 namespace。第一次启动或用户清除配置后，namespace/key
+     * 可能不存在， 这属于正常情况，调用方会据此进入配网模式。
      */
     nvs_handle_t handle;
     esp_err_t err = nvs_open(WIFI_CFG_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "open namespace %s failed: %s", WIFI_CFG_NAMESPACE, esp_err_to_name(err));
+        ESP_LOGW(TAG, "open namespace %s failed: %s", WIFI_CFG_NAMESPACE,
+                 esp_err_to_name(err));
         return err;
     }
 
-    /* 先读 initialized 标记，再读 SSID 和密码；全部成功后才做整体有效性判断。 */
+    /* 先读 initialized 标记，再读 SSID 和密码；全部成功后才做整体有效性判断。
+     */
     uint8_t initialized = 0;
     err = nvs_get_u8(handle, WIFI_CFG_KEY_INITIALIZED, &initialized);
     if (err != ESP_OK) {
@@ -59,7 +59,8 @@ esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg)
     }
 
     size_t password_len = sizeof(cfg->password);
-    err = nvs_get_str(handle, WIFI_CFG_KEY_PASSWORD, cfg->password, &password_len);
+    err = nvs_get_str(handle, WIFI_CFG_KEY_PASSWORD, cfg->password,
+                      &password_len);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "read password failed: %s", esp_err_to_name(err));
         nvs_close(handle);
@@ -78,12 +79,10 @@ esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg)
     return ESP_OK;
 }
 
-esp_err_t nvs_config_save_wifi(const char *ssid, const char *password)
-{
+esp_err_t nvs_config_save_wifi(const char *ssid, const char *password) {
     /* 保存前先做输入校验，避免把空字符串或超长字符串写入 NVS。 */
-    if (ssid == NULL || password == NULL ||
-        ssid[0] == '\0' || password[0] == '\0' ||
-        strlen(ssid) > WIFI_CFG_MAX_SSID_LEN ||
+    if (ssid == NULL || password == NULL || ssid[0] == '\0' ||
+        password[0] == '\0' || strlen(ssid) > WIFI_CFG_MAX_SSID_LEN ||
         strlen(password) > WIFI_CFG_MAX_PASSWORD_LEN) {
         ESP_LOGE(TAG, "invalid wifi config input");
         return ESP_ERR_INVALID_ARG;
@@ -92,7 +91,8 @@ esp_err_t nvs_config_save_wifi(const char *ssid, const char *password)
     nvs_handle_t handle;
     esp_err_t err = nvs_open(WIFI_CFG_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "open namespace %s failed: %s", WIFI_CFG_NAMESPACE, esp_err_to_name(err));
+        ESP_LOGE(TAG, "open namespace %s failed: %s", WIFI_CFG_NAMESPACE,
+                 esp_err_to_name(err));
         return err;
     }
 
@@ -134,8 +134,7 @@ esp_err_t nvs_config_save_wifi(const char *ssid, const char *password)
     return ESP_OK;
 }
 
-esp_err_t nvs_config_clear_wifi(void)
-{
+esp_err_t nvs_config_clear_wifi(void) {
     /*
      * 清除 Wi-Fi 配置用于重新配网。namespace 不存在说明本来就没有配置，
      * 对调用方来说等价于清除成功。
@@ -144,10 +143,12 @@ esp_err_t nvs_config_clear_wifi(void)
     esp_err_t err = nvs_open(WIFI_CFG_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         if (err == ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGW(TAG, "namespace %s not found, nothing to clear", WIFI_CFG_NAMESPACE);
+            ESP_LOGW(TAG, "namespace %s not found, nothing to clear",
+                     WIFI_CFG_NAMESPACE);
             return ESP_OK;
         }
-        ESP_LOGE(TAG, "open namespace %s failed: %s", WIFI_CFG_NAMESPACE, esp_err_to_name(err));
+        ESP_LOGE(TAG, "open namespace %s failed: %s", WIFI_CFG_NAMESPACE,
+                 esp_err_to_name(err));
         return err;
     }
 
