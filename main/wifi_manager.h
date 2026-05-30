@@ -147,14 +147,6 @@ esp_err_t wifi_manager_request_scan(void);
 void wifi_manager_get_scan_snapshot(wifi_scan_snapshot_t *snapshot);
 
 /**
- * @brief 安排异步关闭配网页面。
- *
- * 配网成功并保存 NVS 后调用。延迟关闭可以让 HTTP 响应先发回浏览器，随后切换到
- * STA-only 模式，保留已经验证成功的路由器连接。
- */
-void wifi_manager_schedule_portal_stop(void);
-
-/**
  * @brief 获取 Wi-Fi 管理器状态快照。
  *
  * @param status 输出状态指针。

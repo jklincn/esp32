@@ -8,6 +8,7 @@
 #include "app_nvs.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "wifi_manager.h"
@@ -15,6 +16,9 @@
 /* POST /api/wifi_config 的表单体上限。当前只包含 ssid/password，256
  * 字节足够且可防止异常大请求占内存。 */
 #define WIFI_FORM_MAX_BODY_LEN 256
+
+/* 配网成功后留一点时间把 HTTP 响应发回浏览器，再重启进入正常启动路径。 */
+#define WIFI_CONFIG_RESTART_DELAY_MS 1500
 
 /* SSID JSON 转义后的最坏情况：每个字节写成 \u00XX。 */
 #define WIFI_SCAN_ESCAPED_SSID_LEN (WIFI_CFG_MAX_SSID_LEN * 6 + 1)
@@ -300,6 +304,7 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
  */
 static void wifi_config_task(void *arg) {
     wifi_config_job_t *job = (wifi_config_job_t *)arg;
+    bool restart_after_response = false;
 
     /*
      * Wi-Fi manager 只负责连接验证；验证成功后由这里保存 NVS 并关闭配网页面。
@@ -321,9 +326,7 @@ static void wifi_config_task(void *arg) {
                  result.ip);
         send_json(job->req, 200, json);
         httpd_req_async_handler_complete(job->req);
-
-        /* 响应发出后再关闭 SoftAP，避免浏览器收不到成功结果。 */
-        wifi_manager_schedule_portal_stop();
+        restart_after_response = true;
     } else if (connected) {
         ESP_LOGE(TAG, "save verified Wi-Fi config failed: %s",
                  esp_err_to_name(err));
@@ -342,6 +345,12 @@ static void wifi_config_task(void *arg) {
     }
 
     free(job);
+    if (restart_after_response) {
+        ESP_LOGI(TAG, "restarting after Wi-Fi config saved");
+        vTaskDelay(pdMS_TO_TICKS(WIFI_CONFIG_RESTART_DELAY_MS));
+        esp_restart();
+    }
+
     vTaskDelete(NULL);
 }
 

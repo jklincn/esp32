@@ -6,6 +6,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "server_notify.h"
 #include "status_led.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -54,6 +55,11 @@ static esp_err_t start_wifi_from_config(const wifi_cfg_t *cfg) {
 
     ESP_ERROR_CHECK(status_led_set_normal_blinking(false));
     ESP_LOGI(TAG, "started with saved Wi-Fi configuration");
+    err = server_notify_startup_connected();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "schedule startup notification failed: %s",
+                 esp_err_to_name(err));
+    }
     return ESP_OK;
 }
 

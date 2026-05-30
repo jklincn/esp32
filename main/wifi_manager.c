@@ -768,39 +768,6 @@ void wifi_manager_get_scan_snapshot(wifi_scan_snapshot_t *snapshot) {
     xSemaphoreGive(s_scan_lock);
 }
 
-static void portal_stop_task(void *arg) {
-    (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(2000));
-
-    wifi_manager_status_t status ;
-    wifi_manager_get_status(&status);
-    if (!status.ap_enabled) {
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ESP_LOGI(TAG, "stopping portal, keeping STA connected");
-    s_run_state = WIFI_RUN_STA;
-    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "switch to STA-only mode failed: %s",
-                 esp_err_to_name(err));
-        s_run_state = WIFI_RUN_PORTAL;
-    } else {
-        state_set_mode(WIFI_MANAGER_MODE_STA, false, NULL);
-    }
-
-    vTaskDelete(NULL);
-}
-
-void wifi_manager_schedule_portal_stop(void) {
-    BaseType_t ok = xTaskCreate(portal_stop_task, "portal_stop", 3072, NULL, 4,
-                                NULL);
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "failed to create portal_stop task");
-    }
-}
-
 void wifi_manager_get_status(wifi_manager_status_t *status) {
     /* 用互斥锁保护结构体整体复制，避免 Web API 读到半更新状态。 */
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
