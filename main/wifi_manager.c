@@ -1,5 +1,6 @@
 #include "wifi_manager.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_event.h"
@@ -19,6 +20,9 @@
 #define WIFI_CONNECT_TIMEOUT_MS 10000
 #define WIFI_CONNECT_MAX_RETRY 5
 
+/* 一次扫描从 Wi-Fi driver 取回的最大 BSS 记录数，随后会按 SSID 去重。 */
+#define WIFI_SCAN_RECORD_LIMIT 32
+
 /* 配网 SoftAP 参数。authmode 使用 WIFI_AUTH_OPEN，因此热点不需要密码。 */
 #define WIFI_AP_CHANNEL 1
 #define WIFI_AP_MAX_CONN 4
@@ -35,10 +39,12 @@ typedef enum {
  * s_wifi_event_group: STA 连接成功/失败事件同步。
  * s_connect_lock: 串行化 Wi-Fi 验证流程，避免多个 HTTP 请求同时改写 STA 配置。
  * s_state_lock: 保护 s_status，确保状态接口读到一致快照。
+ * s_scan_lock: 保护 Wi-Fi 扫描缓存和后台扫描运行标记。
  */
 static EventGroupHandle_t s_wifi_event_group;
 static SemaphoreHandle_t s_connect_lock;
 static SemaphoreHandle_t s_state_lock;
+static SemaphoreHandle_t s_scan_lock;
 
 /* 默认 STA/AP netif；AP netif 需要句柄来配置固定 192.168.4.1 地址。 */
 static esp_netif_t *s_sta_netif;
@@ -60,6 +66,14 @@ static wifi_manager_status_t s_status = {
     .ap_enabled = false,
     .ap_ssid = "",
 };
+
+static wifi_scan_snapshot_t s_scan_cache = {
+    .valid = false,
+    .scanning = false,
+    .last_error = ESP_OK,
+};
+static TickType_t s_scan_cache_updated_tick;
+static bool s_scan_task_running;
 
 /* 标记 STA 已拿到 IP，并保存文本形式的 IPv4 地址。 */
 static void state_set_sta_connected(const char *ip) {
@@ -209,7 +223,7 @@ static esp_err_t configure_ap_ip(void) {
 }
 
 static bool is_valid_sta_credentials(const char *ssid, const char *password) {
-    return ssid[0] != '\0' && password[0] != '\0' &&
+    return ssid != NULL && password != NULL && ssid[0] != '\0' &&
            strlen(ssid) <= WIFI_CFG_MAX_SSID_LEN &&
            strlen(password) <= WIFI_CFG_MAX_PASSWORD_LEN;
 }
@@ -227,7 +241,8 @@ static esp_err_t build_sta_config(wifi_config_t *wifi_config, const char *ssid,
     size_t password_len = strlen(password);
     memcpy(wifi_config->sta.ssid, ssid, ssid_len);
     memcpy(wifi_config->sta.password, password, password_len);
-    wifi_config->sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config->sta.threshold.authmode =
+        password_len == 0 ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
     wifi_config->sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     return ESP_OK;
 }
@@ -361,8 +376,9 @@ esp_err_t wifi_manager_init(void) {
     s_wifi_event_group = xEventGroupCreate();
     s_connect_lock = xSemaphoreCreateMutex();
     s_state_lock = xSemaphoreCreateMutex();
+    s_scan_lock = xSemaphoreCreateMutex();
     if (s_wifi_event_group == NULL || s_connect_lock == NULL ||
-        s_state_lock == NULL) {
+        s_state_lock == NULL || s_scan_lock == NULL) {
         ESP_LOGE(TAG, "failed to create synchronization primitives");
         return ESP_ERR_NO_MEM;
     }
@@ -501,6 +517,11 @@ esp_err_t wifi_manager_start_portal(void) {
 
     state_set_mode(WIFI_MANAGER_MODE_PORTAL, true, ap_ssid);
     ESP_LOGI(TAG, "portal mode ready at http://192.168.4.1");
+    err = wifi_manager_request_scan();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "start initial Wi-Fi scan failed: %s",
+                 esp_err_to_name(err));
+    }
     return ESP_OK;
 }
 
@@ -564,11 +585,194 @@ esp_err_t wifi_manager_try_connect(const wifi_cfg_t *cfg,
     return ESP_OK;
 }
 
+static bool authmode_requires_password(wifi_auth_mode_t authmode) {
+    return authmode != WIFI_AUTH_OPEN && authmode != WIFI_AUTH_OWE;
+}
+
+static bool scan_result_has_ssid(const wifi_scan_ap_t *aps, uint16_t count,
+                                 const char *ssid) {
+    for (uint16_t i = 0; i < count; i++) {
+        if (strcmp(aps[i].ssid, ssid) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static esp_err_t scan_nearby_aps(wifi_scan_ap_t *aps, uint16_t max_aps,
+                                 uint16_t *ap_count) {
+    if (aps == NULL || max_aps == 0 || ap_count == NULL) {
+        ESP_LOGE(TAG, "invalid scan output arguments");
+        return ESP_ERR_INVALID_ARG;
+    }
+    *ap_count = 0;
+
+    /*
+     * 扫描和连接都会占用 STA 控制流程。共用连接锁可以避免用户一边点连接、
+     * 页面一边刷新列表时互相打断。
+     */
+    if (xSemaphoreTake(s_connect_lock, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "scan skipped because Wi-Fi validation is running");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err = ensure_wifi_started();
+    if (err != ESP_OK) {
+        xSemaphoreGive(s_connect_lock);
+        return err;
+    }
+
+    wifi_scan_config_t scan_config = {
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active.min = 0,
+        .scan_time.active.max = 120,
+        .home_chan_dwell_time = 30,
+    };
+
+    ESP_LOGI(TAG, "scanning nearby Wi-Fi APs");
+    err = esp_wifi_scan_start(&scan_config, true);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi scan failed: %s", esp_err_to_name(err));
+        xSemaphoreGive(s_connect_lock);
+        if (err == ESP_ERR_WIFI_STATE) {
+            return ESP_ERR_INVALID_STATE;
+        }
+        return err;
+    }
+
+    wifi_ap_record_t *records =
+        calloc(WIFI_SCAN_RECORD_LIMIT, sizeof(wifi_ap_record_t));
+    if (records == NULL) {
+        ESP_LOGE(TAG, "alloc scan record buffer failed");
+        esp_wifi_clear_ap_list();
+        xSemaphoreGive(s_connect_lock);
+        return ESP_ERR_NO_MEM;
+    }
+
+    uint16_t record_count = WIFI_SCAN_RECORD_LIMIT;
+    err = esp_wifi_scan_get_ap_records(&record_count, records);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "get Wi-Fi scan records failed: %s",
+                 esp_err_to_name(err));
+        free(records);
+        xSemaphoreGive(s_connect_lock);
+        return err;
+    }
+
+    for (uint16_t i = 0; i < record_count && *ap_count < max_aps; i++) {
+        char ssid[WIFI_CFG_MAX_SSID_LEN + 1] = {0};
+        size_t ssid_len =
+            strnlen((const char *)records[i].ssid, WIFI_CFG_MAX_SSID_LEN);
+        if (ssid_len == 0) {
+            continue;
+        }
+
+        memcpy(ssid, records[i].ssid, ssid_len);
+        if (scan_result_has_ssid(aps, *ap_count, ssid)) {
+            continue;
+        }
+
+        wifi_scan_ap_t *ap = &aps[*ap_count];
+        snprintf(ap->ssid, sizeof(ap->ssid), "%s", ssid);
+        ap->rssi = records[i].rssi;
+        ap->channel = records[i].primary;
+        ap->password_required = authmode_requires_password(records[i].authmode);
+        (*ap_count)++;
+    }
+
+    free(records);
+    xSemaphoreGive(s_connect_lock);
+
+    ESP_LOGI(TAG, "Wi-Fi scan returned %u APs", (unsigned)*ap_count);
+    return ESP_OK;
+}
+
+static void wifi_scan_task(void *arg) {
+    (void)arg;
+
+    wifi_scan_ap_t aps[WIFI_SCAN_MAX_APS];
+    uint16_t ap_count = 0;
+    esp_err_t err = scan_nearby_aps(aps, WIFI_SCAN_MAX_APS, &ap_count);
+
+    xSemaphoreTake(s_scan_lock, portMAX_DELAY);
+    if (err == ESP_OK) {
+        memset(&s_scan_cache, 0, sizeof(s_scan_cache));
+        memcpy(s_scan_cache.aps, aps, ap_count * sizeof(aps[0]));
+        s_scan_cache.ap_count = ap_count;
+        s_scan_cache.valid = true;
+        s_scan_cache_updated_tick = xTaskGetTickCount();
+    }
+    s_scan_cache.scanning = false;
+    s_scan_cache.last_error = err;
+    s_scan_task_running = false;
+    xSemaphoreGive(s_scan_lock);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "background Wi-Fi scan failed: %s",
+                 esp_err_to_name(err));
+    }
+    vTaskDelete(NULL);
+}
+
+esp_err_t wifi_manager_request_scan(void) {
+    if (s_scan_lock == NULL) {
+        ESP_LOGE(TAG, "scan requested before wifi manager init");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_scan_lock, portMAX_DELAY);
+    if (s_scan_task_running) {
+        s_scan_cache.scanning = true;
+        xSemaphoreGive(s_scan_lock);
+        return ESP_OK;
+    }
+    s_scan_cache.scanning = true;
+    s_scan_task_running = true;
+    xSemaphoreGive(s_scan_lock);
+
+    BaseType_t ok = xTaskCreate(wifi_scan_task, "wifi_scan", 4096, NULL, 3,
+                                NULL);
+    if (ok == pdPASS) {
+        return ESP_OK;
+    }
+
+    xSemaphoreTake(s_scan_lock, portMAX_DELAY);
+    s_scan_cache.scanning = false;
+    s_scan_cache.last_error = ESP_ERR_NO_MEM;
+    s_scan_task_running = false;
+    xSemaphoreGive(s_scan_lock);
+    ESP_LOGE(TAG, "failed to create Wi-Fi scan task");
+    return ESP_ERR_NO_MEM;
+}
+
+void wifi_manager_get_scan_snapshot(wifi_scan_snapshot_t *snapshot) {
+    if (snapshot == NULL) {
+        return;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (s_scan_lock == NULL) {
+        snapshot->last_error = ESP_ERR_INVALID_STATE;
+        return;
+    }
+
+    xSemaphoreTake(s_scan_lock, portMAX_DELAY);
+    *snapshot = s_scan_cache;
+    if (snapshot->valid) {
+        TickType_t age_ticks = xTaskGetTickCount() - s_scan_cache_updated_tick;
+        uint64_t age_ms = (uint64_t)age_ticks * portTICK_PERIOD_MS;
+        snapshot->age_ms =
+            age_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)age_ms;
+    }
+    xSemaphoreGive(s_scan_lock);
+}
+
 static void portal_stop_task(void *arg) {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    wifi_manager_status_t status;
+    wifi_manager_status_t status ;
     wifi_manager_get_status(&status);
     if (!status.ap_enabled) {
         vTaskDelete(NULL);

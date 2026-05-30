@@ -11,7 +11,6 @@ static const char *TAG = "[app_nvs]";
 
 static bool app_nvs_is_wifi_valid(const wifi_cfg_t *cfg) {
     return cfg->initialized && cfg->ssid[0] != '\0' &&
-           cfg->password[0] != '\0' &&
            strnlen(cfg->ssid, sizeof(cfg->ssid)) <= WIFI_CFG_MAX_SSID_LEN &&
            strnlen(cfg->password, sizeof(cfg->password)) <=
                WIFI_CFG_MAX_PASSWORD_LEN;
@@ -101,9 +100,10 @@ esp_err_t app_nvs_load_wifi(wifi_cfg_t *cfg) {
 }
 
 esp_err_t app_nvs_save_wifi(const char *ssid, const char *password) {
-    /* 保存前先做输入校验，避免把空字符串或超长字符串写入 NVS。 */
+    /* 保存前先做输入校验，避免把空 SSID 或超长字符串写入 NVS。
+     * password 允许为空，用于开放 Wi-Fi。 */
     if (ssid == NULL || password == NULL || ssid[0] == '\0' ||
-        password[0] == '\0' || strlen(ssid) > WIFI_CFG_MAX_SSID_LEN ||
+        strlen(ssid) > WIFI_CFG_MAX_SSID_LEN ||
         strlen(password) > WIFI_CFG_MAX_PASSWORD_LEN) {
         ESP_LOGE(TAG, "invalid wifi config input");
         return ESP_ERR_INVALID_ARG;

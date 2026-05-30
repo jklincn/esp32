@@ -16,6 +16,9 @@
  * 字节足够且可防止异常大请求占内存。 */
 #define WIFI_FORM_MAX_BODY_LEN 256
 
+/* SSID JSON 转义后的最坏情况：每个字节写成 \u00XX。 */
+#define WIFI_SCAN_ESCAPED_SSID_LEN (WIFI_CFG_MAX_SSID_LEN * 6 + 1)
+
 static const char *TAG = "[web_server]";
 
 extern const uint8_t web_index_html_start[] asm("_binary_index_html_start");
@@ -94,6 +97,53 @@ static bool url_decode(const char *src, char *dst, size_t dst_len) {
     return true;
 }
 
+static bool json_escape_string(const char *src, char *dst, size_t dst_len) {
+    size_t out = 0;
+    for (size_t i = 0; src[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)src[i];
+
+        if (c == '"' || c == '\\') {
+            if (out + 2 >= dst_len) {
+                return false;
+            }
+            dst[out++] = '\\';
+            dst[out++] = (char)c;
+        } else if (c < 0x20) {
+            if (out + 6 >= dst_len) {
+                return false;
+            }
+            snprintf(dst + out, dst_len - out, "\\u%04x", c);
+            out += 6;
+        } else {
+            if (out + 1 >= dst_len) {
+                return false;
+            }
+            dst[out++] = (char)c;
+        }
+    }
+
+    dst[out] = '\0';
+    return true;
+}
+
+static bool scan_refresh_requested(httpd_req_t *req) {
+    size_t query_len = httpd_req_get_url_query_len(req);
+    if (query_len == 0 || query_len >= 64) {
+        return false;
+    }
+
+    char query[64];
+    esp_err_t err = httpd_req_get_url_query_str(req, query, sizeof(query));
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    char value[8];
+    err = httpd_query_key_value(query, "refresh", value, sizeof(value));
+    return err == ESP_OK &&
+           (strcmp(value, "1") == 0 || strcmp(value, "true") == 0);
+}
+
 /*
  * 解析 Wi-Fi 配置表单。
  * body 会被 strtok_r()
@@ -130,8 +180,8 @@ static bool parse_wifi_form(char *body, char *ssid, size_t ssid_len,
         }
     }
 
-    /* 当前策略要求 SSID 和密码都非空；开放网络不会通过这里。 */
-    return ssid[0] != '\0' && password[0] != '\0';
+    /* SSID 必须非空；password 允许为空，用于开放 Wi-Fi。 */
+    return ssid[0] != '\0';
 }
 
 /* GET /：返回内置 HTML 配网页面。 */
@@ -159,6 +209,87 @@ static esp_err_t status_handler(httpd_req_t *req) {
              status.ap_enabled ? "true" : "false");
 
     send_json(req, 200, json);
+    return ESP_OK;
+}
+
+/* GET /api/wifi_scan：返回扫描缓存；refresh=1 时触发后台刷新。 */
+static esp_err_t wifi_scan_handler(httpd_req_t *req) {
+    bool refresh = scan_refresh_requested(req);
+    if (refresh) {
+        esp_err_t err = wifi_manager_request_scan();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "request Wi-Fi scan failed: %s",
+                     esp_err_to_name(err));
+            send_json(req, 500,
+                      "{\"ok\":false,\"message\":\"Failed to start Wi-Fi "
+                      "scan\"}");
+            return ESP_OK;
+        }
+    }
+
+    wifi_scan_snapshot_t snapshot;
+    wifi_manager_get_scan_snapshot(&snapshot);
+    if (!snapshot.valid && !snapshot.scanning) {
+        esp_err_t err = wifi_manager_request_scan();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "request initial Wi-Fi scan failed: %s",
+                     esp_err_to_name(err));
+            send_json(req, 500,
+                      "{\"ok\":false,\"message\":\"Failed to start Wi-Fi "
+                      "scan\"}");
+            return ESP_OK;
+        }
+        wifi_manager_get_scan_snapshot(&snapshot);
+    }
+
+    const char *last_error = snapshot.last_error == ESP_OK
+                                 ? "ESP_OK"
+                                 : esp_err_to_name(snapshot.last_error);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    char head[192];
+    snprintf(head, sizeof(head),
+             "{\"ok\":true,\"valid\":%s,\"scanning\":%s,\"age_ms\":%lu,"
+             "\"last_error\":\"%s\",\"networks\":[",
+             snapshot.valid ? "true" : "false",
+             snapshot.scanning ? "true" : "false",
+             (unsigned long)snapshot.age_ms, last_error);
+    esp_err_t err = httpd_resp_sendstr_chunk(req, head);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "send scan JSON header failed: %s",
+                 esp_err_to_name(err));
+        return ESP_OK;
+    }
+
+    uint16_t sent_count = 0;
+    for (uint16_t i = 0; i < snapshot.ap_count; i++) {
+        char escaped_ssid[WIFI_SCAN_ESCAPED_SSID_LEN];
+        if (!json_escape_string(snapshot.aps[i].ssid, escaped_ssid,
+                                sizeof(escaped_ssid))) {
+            ESP_LOGW(TAG, "skip SSID that is too long after JSON escape");
+            continue;
+        }
+
+        char item[320];
+        snprintf(item, sizeof(item),
+                 "%s{\"ssid\":\"%s\",\"rssi\":%d,\"channel\":%u,"
+                 "\"password_required\":%s}",
+                 sent_count == 0 ? "" : ",", escaped_ssid,
+                 snapshot.aps[i].rssi, snapshot.aps[i].channel,
+                 snapshot.aps[i].password_required ? "true" : "false");
+        err = httpd_resp_sendstr_chunk(req, item);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "send scan JSON item failed: %s",
+                     esp_err_to_name(err));
+            return ESP_OK;
+        }
+        sent_count++;
+    }
+
+    httpd_resp_sendstr_chunk(req, "]}");
+    httpd_resp_sendstr_chunk(req, NULL);
     return ESP_OK;
 }
 
@@ -260,7 +391,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
         ESP_LOGW(TAG, "invalid wifi_config form");
         free(job);
         send_json(req, 400,
-                  "{\"ok\":false,\"message\":\"Invalid SSID or password\"}");
+                  "{\"ok\":false,\"message\":\"Invalid SSID\"}");
         return ESP_OK;
     }
     job->wifi.initialized = true;
@@ -336,6 +467,12 @@ esp_err_t web_server_start(void) {
         .handler = status_handler,
         .user_ctx = NULL,
     };
+    const httpd_uri_t wifi_scan_uri = {
+        .uri = "/api/wifi_scan",
+        .method = HTTP_GET,
+        .handler = wifi_scan_handler,
+        .user_ctx = NULL,
+    };
     err = httpd_register_uri_handler(s_server, &index_uri);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "register / failed: %s", esp_err_to_name(err));
@@ -350,6 +487,12 @@ esp_err_t web_server_start(void) {
     err = httpd_register_uri_handler(s_server, &status_uri);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "register /api/status failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = httpd_register_uri_handler(s_server, &wifi_scan_uri);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register /api/wifi_scan failed: %s",
+                 esp_err_to_name(err));
         return err;
     }
     ESP_LOGI(TAG, "HTTP server started on port %d", config.server_port);

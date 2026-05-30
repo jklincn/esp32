@@ -39,7 +39,6 @@ static void init_common_services(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(status_led_init());
-    ESP_ERROR_CHECK(status_led_set_normal());
     ESP_ERROR_CHECK(button_manager_start());
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(web_server_start());
@@ -48,11 +47,12 @@ static void init_common_services(void) {
 static esp_err_t start_wifi_from_config(const wifi_cfg_t *cfg) {
     esp_err_t err = wifi_manager_start_sta(cfg);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "saved Wi-Fi failed, starting portal: %s",
-                 esp_err_to_name(err));
-        return wifi_manager_start_portal();
+        ESP_LOGE(TAG, "saved Wi-Fi failed: %s", esp_err_to_name(err));
+        ESP_ERROR_CHECK(status_led_set_error());
+        return err;
     }
 
+    ESP_ERROR_CHECK(status_led_set_normal_blinking(false));
     ESP_LOGI(TAG, "started with saved Wi-Fi configuration");
     return ESP_OK;
 }
@@ -72,6 +72,7 @@ void app_main(void) {
             err = start_wifi_from_config(&saved_wifi_cfg);
             break;
         case STARTUP_MODE_PORTAL:
+            ESP_ERROR_CHECK(status_led_set_normal_blinking(true));
             err = wifi_manager_start_portal();
             break;
         default:

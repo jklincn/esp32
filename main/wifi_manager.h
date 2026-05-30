@@ -1,9 +1,12 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "app_nvs.h"
 #include "esp_err.h"
+
+#define WIFI_SCAN_MAX_APS 20
 
 /**
  * @brief Wi-Fi 管理器当前工作模式。
@@ -52,6 +55,44 @@ typedef struct {
 } wifi_manager_connect_result_t;
 
 /**
+ * @brief 扫描到的 Wi-Fi 热点摘要。
+ *
+ * 只暴露配网页面需要展示和提交的信息，避免 HTTP 层直接依赖 ESP-IDF 的
+ * wifi_ap_record_t。
+ */
+typedef struct {
+    /** SSID，已保证以 '\0' 结尾；隐藏网络不会出现在扫描结果中。 */
+    char ssid[WIFI_CFG_MAX_SSID_LEN + 1];
+    /** RSSI 信号强度，数值越接近 0 表示信号越强。 */
+    int8_t rssi;
+    /** 主信道。 */
+    uint8_t channel;
+    /** true 表示连接该网络需要密码。 */
+    bool password_required;
+} wifi_scan_ap_t;
+
+/**
+ * @brief Wi-Fi 扫描缓存快照。
+ *
+ * 配网页面读取的是这个 RAM 缓存，刷新按钮只触发后台扫描，不会让 HTTP
+ * 请求长时间阻塞。
+ */
+typedef struct {
+    /** 最近一次成功扫描到的热点列表。 */
+    wifi_scan_ap_t aps[WIFI_SCAN_MAX_APS];
+    /** aps 中有效条目数量。 */
+    uint16_t ap_count;
+    /** true 表示已经有一次可展示的扫描结果，即使 ap_count 为 0。 */
+    bool valid;
+    /** true 表示后台扫描任务正在运行。 */
+    bool scanning;
+    /** 缓存年龄，单位毫秒；valid=false 时为 0。 */
+    uint32_t age_ms;
+    /** 最近一次后台扫描的错误码，成功时为 ESP_OK。 */
+    esp_err_t last_error;
+} wifi_scan_snapshot_t;
+
+/**
  * @brief 初始化 Wi-Fi 管理器内部资源。
  *
  * 会创建事件组、互斥锁、默认 STA/AP netif，配置 SoftAP 地址，并注册 Wi-Fi/IP
@@ -89,6 +130,21 @@ esp_err_t wifi_manager_start_portal(void);
  */
 esp_err_t wifi_manager_try_connect(const wifi_cfg_t *cfg,
                                    wifi_manager_connect_result_t *result);
+
+/**
+ * @brief 请求后台刷新 Wi-Fi 扫描缓存。
+ *
+ * 如果扫描已经在运行，会直接返回 ESP_OK；调用方随后可用
+ * wifi_manager_get_scan_snapshot() 查看 scanning 状态。
+ */
+esp_err_t wifi_manager_request_scan(void);
+
+/**
+ * @brief 获取当前 Wi-Fi 扫描缓存快照。
+ *
+ * @param snapshot 输出快照指针。
+ */
+void wifi_manager_get_scan_snapshot(wifi_scan_snapshot_t *snapshot);
 
 /**
  * @brief 安排异步关闭配网页面。

@@ -7,15 +7,16 @@
     <title>SMS Gateway</title>
     <style>
         :root {
-            --bg: #f6f7f9;
-            --panel: #fff;
-            --text: #16202a;
-            --muted: #607080;
-            --line: #d9e0e7;
-            --accent: #0b6bcb;
-            --ok: #0f7b4f;
-            --warn: #b45309;
+            --bg: #f2f3f5;
+            --surface: #fff;
+            --text: #111827;
+            --muted: #6b7280;
+            --line: #d9dde4;
+            --accent: #0a84ff;
+            --ok: #16884a;
+            --warn: #9a5a00;
             --bad: #b42318;
+            --pressed: #eef2f7;
         }
 
         * {
@@ -24,117 +25,254 @@
 
         body {
             margin: 0;
+            min-height: 100vh;
             background: var(--bg);
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, "Noto Sans SC", sans-serif;
             font-size: 16px;
-            line-height: 1.5;
+            line-height: 1.35;
         }
 
         main {
-            width: min(760px, 100%);
+            width: min(430px, 100%);
+            min-height: 100vh;
             margin: 0 auto;
-            padding: 24px;
+            padding: 18px 14px 28px;
         }
 
         header {
-            padding: 10px 0 18px;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            margin: 0 -14px;
+            padding: max(12px, env(safe-area-inset-top)) 14px 12px;
+            background: rgba(242, 243, 245, .96);
+            backdrop-filter: blur(14px);
+            text-align: center;
+            border-bottom: 1px solid rgba(217, 221, 228, .7);
         }
 
         h1 {
             margin: 0;
-            font-size: 28px;
-            line-height: 1.2;
+            font-size: 20px;
+            line-height: 1.25;
             font-weight: 700;
             letter-spacing: 0;
         }
 
-        h2 {
-            margin: 0 0 14px;
-            font-size: 18px;
-            line-height: 1.3;
-        }
-
-        .sub {
+        .status-line {
             margin: 6px 0 0;
             color: var(--muted);
-        }
-
-        .panel {
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            padding: 18px;
-            margin: 14px 0;
-            box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-        }
-
-        .item {
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            padding: 12px;
-            background: #fbfcfd;
-            min-width: 0;
-        }
-
-        .label {
-            display: block;
-            color: var(--muted);
             font-size: 13px;
-            margin-bottom: 4px;
-        }
-
-        .value {
-            font-weight: 650;
             overflow-wrap: anywhere;
         }
 
-        .pill {
-            display: inline-flex;
+        .section-head {
+            display: flex;
             align-items: center;
-            min-height: 28px;
-            padding: 3px 10px;
-            border-radius: 999px;
-            background: #eef4ff;
-            color: #1849a9;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 22px 2px 8px;
+        }
+
+        h2 {
+            margin: 0;
+            color: #374151;
+            font-size: 13px;
+            line-height: 1.2;
+            font-weight: 700;
+            letter-spacing: .02em;
+        }
+
+        button {
+            min-height: 40px;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        button:disabled {
+            opacity: .58;
+            cursor: not-allowed;
+        }
+
+        .refresh-btn {
+            min-height: 32px;
+            padding: 5px 10px;
+            color: var(--accent);
             font-weight: 650;
         }
 
-        .pill.ok {
-            background: #e8f6ef;
+        .refresh-btn:active {
+            background: var(--pressed);
+        }
+
+        .wifi-list {
+            overflow: hidden;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .network-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 12px;
+            align-items: center;
+            width: 100%;
+            min-height: 52px;
+            padding: 10px 14px;
+            border-radius: 0;
+            text-align: left;
+        }
+
+        .network-row + .network-row {
+            border-top: 1px solid var(--line);
+        }
+
+        .network-row:active {
+            background: var(--pressed);
+        }
+
+        .network-name {
+            display: block;
+            min-width: 0;
+            font-weight: 650;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .network-side {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .signal {
+            display: inline-flex;
+            align-items: end;
+            gap: 2px;
+            width: 26px;
+            height: 16px;
+        }
+
+        .signal span {
+            width: 4px;
+            border-radius: 2px 2px 0 0;
+            background: #c2c9d2;
+        }
+
+        .signal span:nth-child(1) {
+            height: 4px;
+        }
+
+        .signal span:nth-child(2) {
+            height: 8px;
+        }
+
+        .signal span:nth-child(3) {
+            height: 12px;
+        }
+
+        .signal span:nth-child(4) {
+            height: 16px;
+        }
+
+        .signal[data-level="1"] span:nth-child(-n + 1),
+        .signal[data-level="2"] span:nth-child(-n + 2),
+        .signal[data-level="3"] span:nth-child(-n + 3),
+        .signal[data-level="4"] span {
+            background: var(--text);
+        }
+
+        .empty-state {
+            padding: 22px 14px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .msg {
+            min-height: 28px;
+            margin: 0 2px 10px;
+            color: var(--muted);
+            font-size: 14px;
+            overflow-wrap: anywhere;
+        }
+
+        .msg.ok {
             color: var(--ok);
         }
 
-        .pill.bad {
-            background: #fff1f0;
-            color: var(--bad);
-        }
-
-        .pill.warn {
-            background: #fff7ed;
+        .msg.warn {
             color: var(--warn);
         }
 
-        form {
+        .msg.bad {
+            color: var(--bad);
+        }
+
+        .msg a {
+            color: var(--accent);
+            font-weight: 650;
+        }
+
+        .sheet {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            display: none;
+            align-items: end;
+            justify-content: center;
+            padding: 14px;
+            background: rgba(17, 24, 39, .28);
+        }
+
+        .sheet.open {
+            display: flex;
+        }
+
+        .sheet-panel {
+            width: min(430px, 100%);
+            background: var(--surface);
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 18px 48px rgba(15, 23, 42, .22);
+        }
+
+        .sheet-title {
             margin: 0;
+            font-size: 18px;
+            line-height: 1.3;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+        }
+
+        .sheet-sub {
+            margin: 4px 0 14px;
+            color: var(--muted);
+            font-size: 13px;
         }
 
         label {
             display: block;
-            margin: 14px 0 6px;
+            margin: 0 0 6px;
+            color: #374151;
+            font-size: 13px;
             font-weight: 650;
         }
 
         input {
             width: 100%;
-            min-height: 44px;
-            border: 1px solid #c8d2dc;
+            min-height: 46px;
+            border: 1px solid #c8d0da;
             border-radius: 8px;
             padding: 10px 12px;
             background: #fff;
@@ -145,107 +283,45 @@
 
         input:focus {
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(11, 107, 203, .14);
+            box-shadow: 0 0 0 3px rgba(10, 132, 255, .14);
         }
 
-        .actions {
-            display: flex;
+        .sheet-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 10px;
-            flex-wrap: wrap;
-            margin-top: 18px;
+            margin-top: 14px;
+        }
+
+        .sheet-actions button {
+            font-weight: 700;
+        }
+
+        .secondary {
+            background: #edf0f4;
+            color: #273142;
+        }
+
+        .primary {
+            background: var(--accent);
+            color: #fff;
         }
 
         .hidden {
             display: none !important;
         }
 
-        button {
-            min-height: 42px;
-            border: 1px solid transparent;
-            border-radius: 8px;
-            padding: 9px 14px;
-            font: inherit;
-            font-weight: 650;
-            cursor: pointer;
-        }
-
-        button.primary {
-            background: var(--accent);
-            color: #fff;
-        }
-
-        a.button {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 42px;
-            border-radius: 8px;
-            padding: 9px 14px;
-            background: var(--accent);
-            color: #fff;
-            font-weight: 650;
-            text-decoration: none;
-        }
-
-        button.secondary {
-            background: #fff;
-            border-color: #c8d2dc;
-            color: #27364a;
-        }
-
-        button:disabled {
-            opacity: .65;
-            cursor: not-allowed;
-        }
-
-        .msg {
-            margin-top: 16px;
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            padding: 12px;
-            background: #fbfcfd;
-            min-height: 46px;
-            overflow-wrap: anywhere;
-        }
-
-        .msg.ok {
-            border-color: #a7dbc1;
-            background: #eefaf4;
-            color: #075e3d;
-        }
-
-        .msg.bad {
-            border-color: #f4b5ad;
-            background: #fff5f4;
-            color: #9f1d13;
-        }
-
-        .msg.warn {
-            border-color: #f7c98b;
-            background: #fff8ed;
-            color: #8a3f00;
-        }
-
-        a {
-            color: var(--accent);
-            font-weight: 650;
-        }
-
-        @media (max-width: 560px) {
+        @media (min-width: 560px) {
             main {
-                padding: 18px 14px;
+                padding-top: 24px;
             }
 
-            .grid {
-                grid-template-columns: 1fr;
-            }
-
-            .actions {
-                flex-direction: column;
-            }
-
-            button {
-                width: 100%;
+            header {
+                position: static;
+                margin: 0;
+                border-bottom: 0;
+                background: transparent;
+                backdrop-filter: none;
             }
         }
     </style>
@@ -254,111 +330,238 @@
     <main>
         <header>
             <h1>SMS Gateway</h1>
-            <p class="sub">Wi-Fi 配网与设备状态</p>
+            <p id="statusLine" class="status-line">正在读取设备状态</p>
         </header>
 
-        <section class="panel" aria-labelledby="statusTitle">
-            <h2 id="statusTitle">当前状态</h2>
-            <div class="grid">
-                <div class="item">
-                    <span class="label">模式</span>
-                    <span id="mode" class="pill warn">读取中</span>
-                </div>
-                <div class="item">
-                    <span class="label">STA 连接</span>
-                    <span id="staConnected" class="pill warn">读取中</span>
-                </div>
-                <div class="item">
-                    <span class="label">STA IP</span>
-                    <span id="staIp" class="value">-</span>
-                </div>
-                <div class="item">
-                    <span class="label">SoftAP</span>
-                    <span id="apEnabled" class="pill warn">读取中</span>
-                </div>
-            </div>
-        </section>
+        <div class="section-head">
+            <h2>可用 Wi-Fi</h2>
+            <button id="refreshBtn" class="refresh-btn" type="button">刷新</button>
+        </div>
 
-        <section class="panel" aria-labelledby="wifiTitle">
-            <h2 id="wifiTitle">Wi-Fi 配置</h2>
-            <form id="wifiForm" autocomplete="on">
-                <label for="ssid">SSID</label>
-                <input id="ssid" name="ssid" maxlength="32" autocomplete="off" required>
+        <div id="message" class="msg" role="status" aria-live="polite"></div>
 
-                <label for="password">Password</label>
-                <input id="password" name="password" type="password" maxlength="64" autocomplete="current-password" required>
-
-                <div class="actions">
-                    <button id="connectBtn" class="primary" type="submit">连接 Wi-Fi</button>
-                </div>
-            </form>
-            <div id="message" class="msg" role="status" aria-live="polite">等待操作</div>
-            <div id="redirectActions" class="actions hidden">
-                <a id="switchedLink" class="button" href="#">已切换</a>
-            </div>
+        <section id="wifiList" class="wifi-list" aria-label="可用 Wi-Fi 列表">
+            <div class="empty-state">正在扫描 Wi-Fi</div>
         </section>
     </main>
 
+    <div id="passwordSheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+        <form id="wifiForm" class="sheet-panel" autocomplete="on">
+            <h3 id="sheetTitle" class="sheet-title">连接 Wi-Fi</h3>
+            <p id="selectedMeta" class="sheet-sub"></p>
+            <div id="passwordField">
+                <label for="password">密码</label>
+                <input id="password" name="password" type="password" maxlength="64" autocomplete="current-password">
+            </div>
+            <div class="sheet-actions">
+                <button id="cancelBtn" class="secondary" type="button">取消</button>
+                <button id="connectBtn" class="primary" type="submit">连接</button>
+            </div>
+        </form>
+    </div>
+
     <script>
         const $ = id => document.getElementById(id);
-        let redirectUrl = '';
+        let selectedNetwork = null;
         let waitingForNetworkSwitch = false;
         let statusTimer = null;
-
-        function setPill(el, text, cls) {
-            el.className = 'pill ' + cls;
-            el.textContent = text;
-        }
+        let scanRequestInFlight = false;
+        let scanPollingTimer = null;
+        let backendScanning = false;
 
         function setMessage(text, cls) {
             const message = $('message');
             message.className = 'msg ' + (cls || '');
-            message.innerHTML = text;
+            message.textContent = text || '';
         }
 
-        function setRedirectAction(url) {
-            redirectUrl = url || '';
-            $('switchedLink').href = redirectUrl || '#';
-            $('redirectActions').classList.toggle('hidden', !redirectUrl);
+        function setMessageHtml(html, cls) {
+            const message = $('message');
+            message.className = 'msg ' + (cls || '');
+            message.innerHTML = html || '';
+        }
+
+        function signalLevel(rssi) {
+            if (rssi >= -55) {
+                return 4;
+            }
+            if (rssi >= -67) {
+                return 3;
+            }
+            if (rssi >= -78) {
+                return 2;
+            }
+            return 1;
+        }
+
+        function renderEmpty(text) {
+            $('wifiList').innerHTML = '';
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            empty.textContent = text;
+            $('wifiList').appendChild(empty);
+        }
+
+        function openPasswordSheet(network) {
+            selectedNetwork = network;
+            $('sheetTitle').textContent = network.ssid;
+            $('selectedMeta').textContent = network.password_required ? '需要密码' : '开放网络';
+            $('passwordField').classList.toggle('hidden', !network.password_required);
+            $('password').required = network.password_required;
+            $('password').value = '';
+            $('passwordSheet').classList.add('open');
+            if (network.password_required) {
+                setTimeout(() => $('password').focus(), 60);
+            }
+        }
+
+        function closePasswordSheet() {
+            $('passwordSheet').classList.remove('open');
+            $('connectBtn').disabled = false;
+            selectedNetwork = null;
+        }
+
+        function renderNetworks(networks) {
+            const list = $('wifiList');
+            list.innerHTML = '';
+
+            if (!networks.length) {
+                renderEmpty('没有扫描到可用 Wi-Fi');
+                return;
+            }
+
+            networks.forEach(network => {
+                const row = document.createElement('button');
+                row.className = 'network-row';
+                row.type = 'button';
+                row.addEventListener('click', () => openPasswordSheet(network));
+
+                const left = document.createElement('span');
+                const name = document.createElement('span');
+                name.className = 'network-name';
+                name.textContent = network.ssid;
+                left.appendChild(name);
+
+                const side = document.createElement('span');
+                side.className = 'network-side';
+                side.textContent = network.password_required ? '加密' : '';
+                const signal = document.createElement('span');
+                signal.className = 'signal';
+                signal.dataset.level = String(signalLevel(network.rssi));
+                signal.setAttribute('aria-hidden', 'true');
+                signal.appendChild(document.createElement('span'));
+                signal.appendChild(document.createElement('span'));
+                signal.appendChild(document.createElement('span'));
+                signal.appendChild(document.createElement('span'));
+                side.appendChild(signal);
+
+                row.appendChild(left);
+                row.appendChild(side);
+                list.appendChild(row);
+            });
+        }
+
+        function updateRefreshButton() {
+            $('refreshBtn').disabled = waitingForNetworkSwitch || scanRequestInFlight || backendScanning;
+        }
+
+        function scheduleScanPoll() {
+            if (scanPollingTimer) {
+                clearTimeout(scanPollingTimer);
+            }
+            scanPollingTimer = setTimeout(() => loadNetworks(false), 900);
+        }
+
+        async function loadNetworks(refresh) {
+            if (scanRequestInFlight || waitingForNetworkSwitch) {
+                return;
+            }
+
+            scanRequestInFlight = true;
+            updateRefreshButton();
+            if (refresh) {
+                setMessage('正在刷新 Wi-Fi', 'warn');
+            }
+
+            try {
+                const url = '/api/wifi_scan' + (refresh ? '?refresh=1' : '');
+                const response = await fetch(url, {cache: 'no-store'});
+                const result = await response.json();
+                if (!result.ok) {
+                    throw new Error(result.message || 'scan failed');
+                }
+
+                const networks = result.networks || [];
+                backendScanning = !!result.scanning;
+                if (result.valid || networks.length) {
+                    renderNetworks(networks);
+                } else if (backendScanning) {
+                    renderEmpty('正在扫描 Wi-Fi');
+                } else {
+                    renderEmpty('没有扫描到可用 Wi-Fi');
+                }
+
+                if (backendScanning) {
+                    setMessage(
+                        result.valid ? '正在刷新 Wi-Fi 列表，当前显示上一次结果' : '正在扫描 Wi-Fi',
+                        'warn'
+                    );
+                    scheduleScanPoll();
+                } else if (!result.valid && result.last_error && result.last_error !== 'ESP_OK') {
+                    setMessage('Wi-Fi 扫描失败：' + result.last_error, 'bad');
+                } else {
+                    setMessage(networks.length ? '选择一个 Wi-Fi 进行连接' : '没有扫描到可用 Wi-Fi', '');
+                }
+            } catch (err) {
+                backendScanning = false;
+                renderEmpty('扫描状态读取失败，点击刷新重试');
+                setMessage('Wi-Fi 扫描失败：' + err.message, 'bad');
+            } finally {
+                scanRequestInFlight = false;
+                updateRefreshButton();
+            }
         }
 
         async function loadStatus() {
             try {
                 const response = await fetch('/api/status', {cache: 'no-store'});
                 const status = await response.json();
-
-                setPill(
-                    $('mode'),
-                    status.mode === 'config' ? '配网模式' : 'STA 模式',
-                    status.mode === 'config' ? 'warn' : 'ok'
-                );
-                setPill(
-                    $('staConnected'),
-                    status.sta_connected ? '已连接' : '未连接',
-                    status.sta_connected ? 'ok' : 'bad'
-                );
-                $('staIp').textContent = status.sta_ip || '-';
-                setPill(
-                    $('apEnabled'),
-                    status.ap_enabled ? '已开启' : '已关闭',
-                    status.ap_enabled ? 'warn' : 'ok'
-                );
+                if (status.sta_connected) {
+                    $('statusLine').textContent = '已连接 · ' + status.sta_ip;
+                } else if (status.ap_enabled) {
+                    $('statusLine').textContent = '配网模式 · 连接后设备热点会自动关闭';
+                } else {
+                    $('statusLine').textContent = '未连接';
+                }
             } catch (err) {
                 if (!waitingForNetworkSwitch) {
-                    setMessage('状态读取失败：' + err, 'bad');
+                    $('statusLine').textContent = '状态读取失败';
                 }
             }
         }
 
-        document.getElementById('wifiForm').addEventListener('submit', async event => {
+        $('refreshBtn').addEventListener('click', () => loadNetworks(true));
+        $('cancelBtn').addEventListener('click', closePasswordSheet);
+        $('passwordSheet').addEventListener('click', event => {
+            if (event.target === $('passwordSheet')) {
+                closePasswordSheet();
+            }
+        });
+
+        $('wifiForm').addEventListener('submit', async event => {
             event.preventDefault();
+            if (!selectedNetwork) {
+                return;
+            }
 
             const button = $('connectBtn');
             button.disabled = true;
-            setRedirectAction('');
-            setMessage('正在连接，请稍候', 'warn');
+            setMessage('正在连接 ' + selectedNetwork.ssid, 'warn');
 
-            const body = new URLSearchParams(new FormData(event.target));
+            const body = new URLSearchParams();
+            body.set('ssid', selectedNetwork.ssid);
+            body.set('password', selectedNetwork.password_required ? $('password').value : '');
+
             try {
                 const response = await fetch('/api/wifi_config', {method: 'POST', body});
                 const result = await response.json();
@@ -370,20 +573,26 @@
                         clearInterval(statusTimer);
                         statusTimer = null;
                     }
-                    setMessage(
-                        'Wi-Fi 已连接，设备热点将自动关闭。请切换到家庭 Wi-Fi，完成后点击“已切换”进入 <a href="' + url + '">' + url + '</a>',
+                    if (scanPollingTimer) {
+                        clearTimeout(scanPollingTimer);
+                        scanPollingTimer = null;
+                    }
+                    backendScanning = false;
+                    updateRefreshButton();
+                    $('passwordSheet').classList.remove('open');
+                    setMessageHtml(
+                        'Wi-Fi 已连接。请切换到同一个 Wi-Fi 后打开 <a href="' + url + '">' + url + '</a>',
                         'ok'
                     );
-                    setRedirectAction(url);
                 } else {
                     waitingForNetworkSwitch = false;
-                    setMessage('连接失败，请检查 Wi-Fi 名称和密码：' + result.message, 'bad');
+                    setMessage('连接失败：' + result.message, 'bad');
+                    button.disabled = false;
                 }
             } catch (err) {
                 waitingForNetworkSwitch = false;
-                setMessage('请求失败：' + err, 'bad');
-            } finally {
-                button.disabled = waitingForNetworkSwitch;
+                setMessage('请求失败：' + err.message, 'bad');
+                button.disabled = false;
             }
 
             if (!waitingForNetworkSwitch) {
@@ -392,6 +601,7 @@
         });
 
         loadStatus();
+        loadNetworks(false);
         statusTimer = setInterval(loadStatus, 5000);
     </script>
 </body>

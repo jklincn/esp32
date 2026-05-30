@@ -13,9 +13,7 @@
 
 #define BOOT_BUTTON_GPIO GPIO_NUM_9
 #define BUTTON_POLL_MS 50
-#define BUTTON_RESTART_MS 1000
 #define BUTTON_CLEAR_WIFI_MS 5000
-#define BUTTON_LED_BLINK_MS 300
 
 static const char *TAG = "[button_manager]";
 static TaskHandle_t s_button_task;
@@ -47,8 +45,6 @@ static void button_task(void *arg) {
     // 用于判断“刚按下”和“刚松开”。
     bool last_pressed = false;
     bool clear_wifi_ready = false;
-    bool clear_ready_led_on = false;
-    TickType_t clear_ready_led_tick = 0;
 
     /*
      * BOOT 按键接在 GPIO9 和 GND 之间，是低电平有效：
@@ -59,7 +55,7 @@ static void button_task(void *arg) {
      * 避免按住 BOOT 时重启导致芯片进入下载模式。
      *
      * 行为：
-     *   - 按住 >= 1 秒后松开：重启
+     *   - 按住 < 5 秒后松开：重启
      *   - 按住 >= 5 秒后松开：清除 Wi-Fi 配置并重启
      */
     while (true) {
@@ -74,7 +70,6 @@ static void button_task(void *arg) {
             // 记录按下开始时间。
             press_start_tick = now;
             clear_wifi_ready = false;
-            clear_ready_led_on = false;
             set_status_led_normal();
 
             ESP_LOGI(TAG, "BOOT button pressed");
@@ -84,21 +79,10 @@ static void button_task(void *arg) {
             uint32_t held_ms = pdTICKS_TO_MS(now - press_start_tick);
             if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
                 clear_wifi_ready = true;
-                clear_ready_led_on = true;
-                clear_ready_led_tick = now;
-                set_status_led_clear_ready(clear_ready_led_on);
+                set_status_led_clear_ready(true);
                 ESP_LOGI(TAG,
                          "BOOT button held for 5s, release to clear Wi-Fi "
                          "config and restart");
-            }
-        }
-
-        if (pressed && clear_wifi_ready) {
-            uint32_t blink_ms = pdTICKS_TO_MS(now - clear_ready_led_tick);
-            if (blink_ms >= BUTTON_LED_BLINK_MS) {
-                clear_ready_led_on = !clear_ready_led_on;
-                clear_ready_led_tick = now;
-                set_status_led_clear_ready(clear_ready_led_on);
             }
         }
 
@@ -112,7 +96,6 @@ static void button_task(void *arg) {
             // 长按 5 秒：清除 Wi-Fi 配置并重启。
             if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
                 clear_wifi_ready = false;
-                clear_ready_led_on = false;
                 set_status_led_clear_ready(false);
 
                 ESP_LOGW(TAG,
@@ -129,8 +112,8 @@ static void button_task(void *arg) {
                 esp_restart();
             }
 
-            // 长按 1 秒：普通重启。
-            else if (held_ms >= BUTTON_RESTART_MS) {
+            // 小于 5 秒：普通重启。
+            else {
                 ESP_LOGI(TAG, "restarting by BOOT button press");
 
                 vTaskDelay(pdMS_TO_TICKS(200));
@@ -138,7 +121,6 @@ static void button_task(void *arg) {
             }
 
             clear_wifi_ready = false;
-            clear_ready_led_on = false;
             set_status_led_normal();
         }
 
@@ -174,7 +156,7 @@ esp_err_t button_manager_start(void) {
     }
 
     ESP_LOGI(TAG,
-             "BOOT button enabled: release after 1s to restart, release after "
-             "5s to clear Wi-Fi and restart");
+             "BOOT button enabled: release before 5s to restart, release "
+             "after 5s to clear Wi-Fi and restart");
     return ESP_OK;
 }
