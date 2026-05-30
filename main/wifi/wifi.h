@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "app_nvs.h"
+#include "storage/storage.h"
 #include "esp_err.h"
 
 #define WIFI_SCAN_MAX_APS 20

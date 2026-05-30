@@ -1,15 +1,15 @@
 #include <stdbool.h>
 
-#include "app_nvs.h"
-#include "button_manager.h"
+#include "button/button.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "server_notify.h"
-#include "status_led.h"
-#include "web_server.h"
-#include "wifi_manager.h"
+#include "led/led.h"
+#include "notify/notify.h"
+#include "storage/storage.h"
+#include "web/web.h"
+#include "wifi/wifi.h"
 
 static const char *TAG = "[main]";
 

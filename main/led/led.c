@@ -1,4 +1,4 @@
-#include "status_led.h"
+#include "led/led.h"
 
 #include <stdbool.h>
 
@@ -17,7 +17,7 @@
 #define STATUS_LED_NORMAL_BLINK_MS 600
 #define STATUS_LED_CLEAR_READY_BLINK_MS 300
 
-static const char *TAG = "[status_led]";
+static const char *TAG = "[led]";
 
 typedef enum {
     STATUS_LED_EFFECT_OFF,
@@ -165,7 +165,7 @@ esp_err_t status_led_init(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t ok = xTaskCreate(status_led_task, "status_led", 2048, NULL, 4,
+    BaseType_t ok = xTaskCreate(status_led_task, "led", 2048, NULL, 4,
                                 &s_led_task);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "create RGB LED task failed");

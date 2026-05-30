@@ -1,4 +1,4 @@
-#include "app_nvs.h"
+#include "storage/storage.h"
 
 #include <string.h>
 
@@ -7,7 +7,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
-static const char *TAG = "[app_nvs]";
+static const char *TAG = "[storage]";
 
 static bool app_nvs_is_wifi_valid(const wifi_cfg_t *cfg) {
     return cfg->initialized && cfg->ssid[0] != '\0' &&

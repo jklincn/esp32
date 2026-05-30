@@ -1,21 +1,21 @@
-#include "button_manager.h"
+#include "button/button.h"
 
 #include <inttypes.h>
 #include <stdbool.h>
 
-#include "app_nvs.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "status_led.h"
+#include "led/led.h"
+#include "storage/storage.h"
 
 #define BOOT_BUTTON_GPIO GPIO_NUM_9
 #define BUTTON_POLL_MS 50
 #define BUTTON_CLEAR_WIFI_MS 5000
 
-static const char *TAG = "[button_manager]";
+static const char *TAG = "[button]";
 static TaskHandle_t s_button_task;
 
 static void log_status_led_error(esp_err_t err, const char *state) {

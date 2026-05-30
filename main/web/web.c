@@ -1,17 +1,17 @@
-#include "web_server.h"
+#include "web/web.h"
 
 #include <ctype.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "app_nvs.h"
+#include "storage/storage.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "wifi_manager.h"
+#include "wifi/wifi.h"
 
 /* POST /api/wifi_config 的表单体上限。当前只包含 ssid/password，256
  * 字节足够且可防止异常大请求占内存。 */
@@ -23,7 +23,7 @@
 /* SSID JSON 转义后的最坏情况：每个字节写成 \u00XX。 */
 #define WIFI_SCAN_ESCAPED_SSID_LEN (WIFI_CFG_MAX_SSID_LEN * 6 + 1)
 
-static const char *TAG = "[web_server]";
+static const char *TAG = "[web]";
 
 extern const uint8_t web_index_html_start[] asm("_binary_index_html_start");
 

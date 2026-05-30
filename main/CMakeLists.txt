@@ -56,20 +56,20 @@ endfunction()
 escape_c_string("${SERVER_NOTIFY_URL_VALUE}" SERVER_NOTIFY_URL_C)
 escape_c_string("${SERVER_NOTIFY_API_TOKEN_VALUE}" SERVER_NOTIFY_API_TOKEN_C)
 configure_file(
-    "${CMAKE_CURRENT_LIST_DIR}/server_notify_config.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/server_notify_config.h"
+    "${CMAKE_CURRENT_LIST_DIR}/notify/notify_config.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/notify_config.h"
     @ONLY
 )
 
 idf_component_register(
     SRCS
-        "button_manager.c"
-        "app_nvs.c"
-        "main.c"
-        "server_notify.c"
-        "status_led.c"
-        "web_server.c"
-        "wifi_manager.c"
+        "app/main.c"
+        "button/button.c"
+        "led/led.c"
+        "notify/notify.c"
+        "storage/storage.c"
+        "web/web.c"
+        "wifi/wifi.c"
     INCLUDE_DIRS "."
     PRIV_INCLUDE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
     EMBED_TXTFILES

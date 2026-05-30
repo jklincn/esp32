@@ -1,4 +1,4 @@
-#include "server_notify.h"
+#include "notify/notify.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -11,14 +11,14 @@
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "server_notify_config.h"
-#include "wifi_manager.h"
+#include "notify_config.h"
+#include "wifi/wifi.h"
 
 #define SERVER_NOTIFY_TASK_STACK 8192
 #define SERVER_NOTIFY_TASK_PRIORITY 4
 #define SERVER_NOTIFY_TIMEOUT_MS 8000
 
-static const char *TAG = "[server_notify]";
+static const char *TAG = "[notify]";
 
 static bool is_configured(void) {
     return SERVER_NOTIFY_URL[0] != '\0' && SERVER_NOTIFY_API_TOKEN[0] != '\0';

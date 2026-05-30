@@ -1,4 +1,4 @@
-#include "wifi_manager.h"
+#include "wifi/wifi.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +27,7 @@
 #define WIFI_AP_CHANNEL 1
 #define WIFI_AP_MAX_CONN 4
 
-static const char *TAG = "[wifi_manager]";
+static const char *TAG = "[wifi]";
 
 typedef enum {
     WIFI_RUN_PORTAL = 0,
@@ -408,7 +408,7 @@ esp_err_t wifi_manager_init(void) {
 
     /*
      * 使用 RAM 存储 Wi-Fi 配置，避免 esp_wifi_set_config() 自动写入系统 Wi-Fi
-     * NVS。 本项目只通过 app_nvs.c 保存经过验证的配置。
+     * NVS。 本项目只通过 storage.c 保存经过验证的配置。
      */
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (err != ESP_OK) {
