@@ -392,7 +392,7 @@ esp_err_t wifi_manager_init(void) {
 
     /*
      * 使用 RAM 存储 Wi-Fi 配置，避免 esp_wifi_set_config() 自动写入系统 Wi-Fi
-     * NVS。 本项目只通过 nvs_config.c 保存经过验证的配置。
+     * NVS。 本项目只通过 app_nvs.c 保存经过验证的配置。
      */
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (err != ESP_OK) {

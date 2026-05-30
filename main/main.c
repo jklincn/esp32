@@ -1,33 +1,41 @@
 #include <stdbool.h>
 
+#include "app_nvs.h"
 #include "button_manager.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "nvs_config.h"
-#include "nvs_flash.h"
 #include "status_led.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "[main]";
 
-static void init_nvs(void) {
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "NVS init requires erase: %s", esp_err_to_name(err));
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+typedef enum {
+    STARTUP_MODE_SAVED_WIFI,
+    STARTUP_MODE_PORTAL,
+    STARTUP_MODE_ERROR,
+} startup_mode_t;
+
+static startup_mode_t select_startup_mode(wifi_cfg_t *saved_wifi_cfg) {
+    esp_err_t err = app_nvs_load_wifi(saved_wifi_cfg);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "valid Wi-Fi config found in NVS");
+        return STARTUP_MODE_SAVED_WIFI;
     }
 
-    ESP_ERROR_CHECK(err);
+    if (app_nvs_is_wifi_config_unavailable(err)) {
+        ESP_LOGW(TAG, "no valid Wi-Fi config in NVS: %s", esp_err_to_name(err));
+        return STARTUP_MODE_PORTAL;
+    }
 
-    ESP_LOGI(TAG, "NVS initialized");
+    ESP_LOGE(TAG, "failed to determine startup mode: %s", esp_err_to_name(err));
+    return STARTUP_MODE_ERROR;
 }
 
 static void init_common_services(void) {
+    ESP_ERROR_CHECK(app_nvs_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(status_led_init());
@@ -50,24 +58,26 @@ static esp_err_t start_wifi_from_config(const wifi_cfg_t *cfg) {
 }
 
 void app_main(void) {
-    init_nvs();
-
-    wifi_cfg_t saved_wifi_cfg;
-    esp_err_t err = nvs_config_load_wifi(&saved_wifi_cfg);
-    bool has_saved_wifi = err == ESP_OK;
-    if (has_saved_wifi) {
-        ESP_LOGI(TAG, "valid Wi-Fi config found in NVS");
-    } else {
-        ESP_LOGW(TAG, "no valid Wi-Fi config in NVS: %s", esp_err_to_name(err));
-    }
-
     init_common_services();
 
-    if (has_saved_wifi) {
-        err = start_wifi_from_config(&saved_wifi_cfg);
-    } else {
-        err = wifi_manager_start_portal();
+    wifi_cfg_t saved_wifi_cfg;
+    startup_mode_t startup_mode = select_startup_mode(&saved_wifi_cfg);
+    if (startup_mode == STARTUP_MODE_ERROR) {
+        return;
     }
+
+    esp_err_t err;
+    switch (startup_mode) {
+        case STARTUP_MODE_SAVED_WIFI:
+            err = start_wifi_from_config(&saved_wifi_cfg);
+            break;
+        case STARTUP_MODE_PORTAL:
+            err = wifi_manager_start_portal();
+            break;
+        default:
+            return;
+    }
+
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi startup failed: %s", esp_err_to_name(err));
         return;

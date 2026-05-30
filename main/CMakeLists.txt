@@ -1,8 +1,8 @@
 idf_component_register(
     SRCS
         "button_manager.c"
+        "app_nvs.c"
         "main.c"
-        "nvs_config.c"
         "status_led.c"
         "web_server.c"
         "wifi_manager.c"

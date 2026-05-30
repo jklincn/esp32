@@ -3,12 +3,12 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
+#include "app_nvs.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "nvs_config.h"
 #include "status_led.h"
 
 #define BOOT_BUTTON_GPIO GPIO_NUM_9
@@ -118,7 +118,7 @@ static void button_task(void *arg) {
                 ESP_LOGW(TAG,
                          "clearing Wi-Fi config by BOOT button long press");
 
-                esp_err_t err = nvs_config_clear_wifi();
+                esp_err_t err = app_nvs_clear_wifi();
                 if (err != ESP_OK) {
                     ESP_LOGE(TAG, "clear Wi-Fi config failed: %s",
                              esp_err_to_name(err));

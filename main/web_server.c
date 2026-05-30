@@ -5,11 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app_nvs.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "nvs_config.h"
 #include "wifi_manager.h"
 
 /* POST /api/wifi_config 的表单体上限。当前只包含 ssid/password，256
@@ -179,7 +179,7 @@ static void wifi_config_task(void *arg) {
     bool connected = err == ESP_OK && result.ok;
 
     if (connected) {
-        err = nvs_config_save_wifi(job->wifi.ssid, job->wifi.password);
+        err = app_nvs_save_wifi(job->wifi.ssid, job->wifi.password);
     }
 
     if (connected && err == ESP_OK) {

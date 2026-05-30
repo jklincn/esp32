@@ -2,8 +2,8 @@
 
 #include <stdbool.h>
 
+#include "app_nvs.h"
 #include "esp_err.h"
-#include "nvs_config.h"
 
 /**
  * @brief Wi-Fi 管理器当前工作模式。

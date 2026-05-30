@@ -1,13 +1,15 @@
-#include "nvs_config.h"
+#include "app_nvs.h"
 
 #include <string.h>
 
+#include "esp_check.h"
 #include "esp_log.h"
 #include "nvs.h"
+#include "nvs_flash.h"
 
-static const char *TAG = "[nvs_config]";
+static const char *TAG = "[app_nvs]";
 
-static bool nvs_config_is_wifi_valid(const wifi_cfg_t *cfg) {
+static bool app_nvs_is_wifi_valid(const wifi_cfg_t *cfg) {
     return cfg->initialized && cfg->ssid[0] != '\0' &&
            cfg->password[0] != '\0' &&
            strnlen(cfg->ssid, sizeof(cfg->ssid)) <= WIFI_CFG_MAX_SSID_LEN &&
@@ -15,7 +17,30 @@ static bool nvs_config_is_wifi_valid(const wifi_cfg_t *cfg) {
                WIFI_CFG_MAX_PASSWORD_LEN;
 }
 
-esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg) {
+esp_err_t app_nvs_init(void) {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
+        err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS init requires erase: %s", esp_err_to_name(err));
+        ESP_RETURN_ON_ERROR(nvs_flash_erase(), TAG, "erase NVS flash failed");
+        err = nvs_flash_init();
+    }
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "NVS initialized");
+    return ESP_OK;
+}
+
+bool app_nvs_is_wifi_config_unavailable(esp_err_t err) {
+    return err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_INVALID_LENGTH ||
+           err == ESP_ERR_NVS_TYPE_MISMATCH || err == ESP_ERR_INVALID_STATE;
+}
+
+esp_err_t app_nvs_load_wifi(wifi_cfg_t *cfg) {
     if (cfg == NULL) {
         ESP_LOGE(TAG, "load_wifi called with NULL cfg");
         return ESP_ERR_INVALID_ARG;
@@ -66,7 +91,7 @@ esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg) {
     nvs_close(handle);
 
     /* NVS 读取成功不等于内容一定可用，例如字段为空或长度异常时仍需要拒绝。 */
-    if (!nvs_config_is_wifi_valid(cfg)) {
+    if (!app_nvs_is_wifi_valid(cfg)) {
         ESP_LOGW(TAG, "wifi config exists but is invalid");
         return ESP_ERR_INVALID_STATE;
     }
@@ -75,7 +100,7 @@ esp_err_t nvs_config_load_wifi(wifi_cfg_t *cfg) {
     return ESP_OK;
 }
 
-esp_err_t nvs_config_save_wifi(const char *ssid, const char *password) {
+esp_err_t app_nvs_save_wifi(const char *ssid, const char *password) {
     /* 保存前先做输入校验，避免把空字符串或超长字符串写入 NVS。 */
     if (ssid == NULL || password == NULL || ssid[0] == '\0' ||
         password[0] == '\0' || strlen(ssid) > WIFI_CFG_MAX_SSID_LEN ||
@@ -130,7 +155,7 @@ esp_err_t nvs_config_save_wifi(const char *ssid, const char *password) {
     return ESP_OK;
 }
 
-esp_err_t nvs_config_clear_wifi(void) {
+esp_err_t app_nvs_clear_wifi(void) {
     /*
      * 清除 Wi-Fi 配置用于重新配网。namespace 不存在说明本来就没有配置，
      * 对调用方来说等价于清除成功。
