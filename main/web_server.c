@@ -1,6 +1,7 @@
 #include "web_server.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,7 +16,9 @@
  * 字节足够且可防止异常大请求占内存。 */
 #define WIFI_FORM_MAX_BODY_LEN 256
 
-static const char *TAG = "web_server";
+static const char *TAG = "[web_server]";
+
+extern const uint8_t web_index_html_start[] asm("_binary_index_html_start");
 
 /* HTTP server 句柄；非 NULL 表示服务已经启动。 */
 static httpd_handle_t s_server;
@@ -28,139 +31,8 @@ static httpd_handle_t s_server;
  */
 typedef struct {
     httpd_req_t *req;
-    char ssid[WIFI_CFG_MAX_SSID_LEN + 1];
-    char password[WIFI_CFG_MAX_PASSWORD_LEN + 1];
+    wifi_cfg_t wifi;
 } wifi_config_job_t;
-
-/*
- * 内置配网页面。
- * 页面直接放在固件中，避免依赖 SPIFFS/LittleFS；前端通过 /api/status 轮询状态，
- * 通过 /api/wifi_config 提交 SSID/密码。
- */
-static const char INDEX_HTML[] =
-    "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" "
-    "content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
-    "<meta name=\"color-scheme\" content=\"light\">"
-    "<title>SMS Gateway</title>"
-    "<style>"
-    ":root{--bg:#f6f7f9;--panel:#fff;--text:#16202a;--muted:#607080;--line:#"
-    "d9e0e7;--accent:#0b6bcb;--ok:#0f7b4f;--warn:#b45309;--bad:#b42318}"
-    "*{box-sizing:border-box}"
-    "body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-"
-    "system,BlinkMacSystemFont,\"Segoe UI\",Arial,\"Noto Sans "
-    "SC\",sans-serif;font-size:16px;line-height:1.5}"
-    "main{width:min(760px,100%);margin:0 auto;padding:24px}"
-    "header{padding:10px 0 18px}"
-    "h1{margin:0;font-size:28px;line-height:1.2;font-weight:700;letter-spacing:"
-    "0}"
-    "h2{margin:0 0 14px;font-size:18px;line-height:1.3}"
-    ".sub{margin:6px 0 0;color:var(--muted)}"
-    ".panel{background:var(--panel);border:1px solid "
-    "var(--line);border-radius:8px;padding:18px;margin:14px 0;box-shadow:0 1px "
-    "2px rgba(16,24,40,.04)}"
-    ".grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}"
-    ".item{border:1px solid "
-    "var(--line);border-radius:8px;padding:12px;background:#fbfcfd;min-width:0}"
-    ".label{display:block;color:var(--muted);font-size:13px;margin-bottom:4px}"
-    ".value{font-weight:650;overflow-wrap:anywhere}"
-    ".pill{display:inline-flex;align-items:center;min-height:28px;padding:3px "
-    "10px;border-radius:999px;background:#eef4ff;color:#1849a9;font-weight:650}"
-    ".pill.ok{background:#e8f6ef;color:var(--ok)}.pill.bad{background:#fff1f0;"
-    "color:var(--bad)}.pill.warn{background:#fff7ed;color:var(--warn)}"
-    "form{margin:0}"
-    "label{display:block;margin:14px 0 6px;font-weight:650}"
-    "input{width:100%;min-height:44px;border:1px solid "
-    "#c8d2dc;border-radius:8px;padding:10px "
-    "12px;background:#fff;color:var(--text);font:inherit;outline:none}"
-    "input:focus{border-color:var(--accent);box-shadow:0 0 0 3px "
-    "rgba(11,107,203,.14)}"
-    ".actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}"
-    "button{min-height:42px;border:1px solid "
-    "transparent;border-radius:8px;padding:9px "
-    "14px;font:inherit;font-weight:650;cursor:pointer}"
-    "button.primary{background:var(--accent);color:#fff}button.secondary{"
-    "background:#fff;border-color:#c8d2dc;color:#27364a}"
-    "button:disabled{opacity:.65;cursor:not-allowed}"
-    ".msg{margin-top:16px;border:1px solid "
-    "var(--line);border-radius:8px;padding:12px;background:#fbfcfd;min-height:"
-    "46px;overflow-wrap:anywhere}"
-    ".msg.ok{border-color:#a7dbc1;background:#eefaf4;color:#075e3d}.msg.bad{"
-    "border-color:#f4b5ad;background:#fff5f4;color:#9f1d13}.msg.warn{border-"
-    "color:#f7c98b;background:#fff8ed;color:#8a3f00}"
-    "a{color:var(--accent);font-weight:650}"
-    "@media(max-width:560px){main{padding:18px "
-    "14px}.grid{grid-template-columns:1fr}.actions{flex-direction:column}"
-    "button{width:100%}}"
-    "</style></head><body>"
-    "<main>"
-    "<header><h1>SMS Gateway</h1><p class=\"sub\">Wi-Fi "
-    "配网与设备状态</p></header>"
-    "<section class=\"panel\" aria-labelledby=\"statusTitle\">"
-    "<h2 id=\"statusTitle\">当前状态</h2>"
-    "<div class=\"grid\">"
-    "<div class=\"item\"><span class=\"label\">模式</span><span id=\"mode\" "
-    "class=\"pill warn\">读取中</span></div>"
-    "<div class=\"item\"><span class=\"label\">STA 连接</span><span "
-    "id=\"staConnected\" class=\"pill warn\">读取中</span></div>"
-    "<div class=\"item\"><span class=\"label\">STA IP</span><span id=\"staIp\" "
-    "class=\"value\">-</span></div>"
-    "<div class=\"item\"><span class=\"label\">SoftAP</span><span "
-    "id=\"apEnabled\" class=\"pill warn\">读取中</span></div>"
-    "</div></section>"
-    "<section class=\"panel\" aria-labelledby=\"wifiTitle\">"
-    "<h2 id=\"wifiTitle\">Wi-Fi 配置</h2>"
-    "<form id=\"wifiForm\" autocomplete=\"on\">"
-    "<label for=\"ssid\">SSID</label><input id=\"ssid\" name=\"ssid\" "
-    "maxlength=\"32\" autocomplete=\"off\" required>"
-    "<label for=\"password\">Password</label><input id=\"password\" "
-    "name=\"password\" type=\"password\" maxlength=\"64\" "
-    "autocomplete=\"current-password\" required>"
-    "<div class=\"actions\"><button id=\"connectBtn\" class=\"primary\" "
-    "type=\"submit\">连接 Wi-Fi</button></div>"
-    "</form>"
-    "<div id=\"message\" class=\"msg\" role=\"status\" "
-    "aria-live=\"polite\">等待操作</div>"
-    "</section>"
-    "</main>"
-    "<script>"
-    "const $=id=>document.getElementById(id);"
-    "function setPill(el,text,cls){el.className='pill "
-    "'+cls;el.textContent=text;}"
-    "function setMessage(text,cls){const m=$('message');m.className='msg "
-    "'+(cls||'');m.innerHTML=text;}"
-    "async function loadStatus(){"
-    "try{"
-    "const r=await fetch('/api/status',{cache:'no-store'});"
-    "const s=await r.json();"
-    "setPill($('mode'),s.mode==='config'?'配网模式':'STA "
-    "模式',s.mode==='config'?'warn':'ok');"
-    "setPill($('staConnected'),s.sta_connected?'已连接':'未连接',s.sta_"
-    "connected?'ok':'bad');"
-    "$('staIp').textContent=s.sta_ip||'-';"
-    "setPill($('apEnabled'),s.ap_enabled?'已开启':'已关闭',s.ap_enabled?'warn':"
-    "'ok');"
-    "}catch(err){setMessage('状态读取失败：'+err,'bad');}"
-    "}"
-    "document.getElementById('wifiForm').addEventListener('submit',async(e)=>{"
-    "e.preventDefault();"
-    "const btn=$('connectBtn');"
-    "btn.disabled=true;"
-    "setMessage('正在连接，请稍候','warn');"
-    "const body=new URLSearchParams(new FormData(e.target));"
-    "try{"
-    "const r=await fetch('/api/wifi_config',{method:'POST',body});"
-    "const j=await r.json();"
-    "if(j.ok){const u='http://'+j.ip;setMessage('Wi-Fi 已连接，STA "
-    "IP：'+j.ip+'。请切换回家庭 Wi-Fi 后访问 <a "
-    "href=\"'+u+'\">'+u+'</a>','ok');}"
-    "else{setMessage('连接失败，请检查 Wi-Fi 名称和密码：'+j.message,'bad');}"
-    "}catch(err){setMessage('请求失败：'+err,'bad');}"
-    "finally{btn.disabled=false;}"
-    "loadStatus();"
-    "});"
-    "loadStatus();setInterval(loadStatus,5000);"
-    "</script></body></html>";
 
 /* 发送 JSON 响应，并把常用状态码转换为 ESP HTTP server 需要的状态字符串。 */
 static void send_json(httpd_req_t *req, int status_code, const char *json) {
@@ -265,7 +137,8 @@ static bool parse_wifi_form(char *body, char *ssid, size_t ssid_len,
 /* GET /：返回内置 HTML 配网页面。 */
 static esp_err_t index_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    esp_err_t err = httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+    const char *html = (const char *)web_index_html_start;
+    esp_err_t err = httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "send index page failed: %s", esp_err_to_name(err));
     }
@@ -281,7 +154,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
     snprintf(json, sizeof(json),
              "{\"mode\":\"%s\",\"sta_connected\":%s,\"sta_ip\":\"%s\",\"ap_"
              "enabled\":%s}",
-             status.mode == WIFI_MANAGER_MODE_CONFIG ? "config" : "sta",
+             status.mode == WIFI_MANAGER_MODE_PORTAL ? "config" : "sta",
              status.sta_connected ? "true" : "false", status.sta_ip,
              status.ap_enabled ? "true" : "false");
 
@@ -298,23 +171,34 @@ static void wifi_config_task(void *arg) {
     wifi_config_job_t *job = (wifi_config_job_t *)arg;
 
     /*
-     * verify_and_save 会先连接验证，成功后保存 NVS；失败不会覆盖已有配置。
+     * Wi-Fi manager 只负责连接验证；验证成功后由这里保存 NVS 并关闭配网页面。
      * 任务里根据错误类型返回不同 JSON，前端据此显示成功、失败或并发冲突。
      */
     wifi_manager_connect_result_t result;
-    esp_err_t err =
-        wifi_manager_verify_and_save(job->ssid, job->password, &result);
+    esp_err_t err = wifi_manager_try_connect(&job->wifi, &result);
+    bool connected = err == ESP_OK && result.ok;
 
-    if (err == ESP_OK && result.ok) {
+    if (connected) {
+        err = nvs_config_save_wifi(job->wifi.ssid, job->wifi.password);
+    }
+
+    if (connected && err == ESP_OK) {
         char json[128];
         snprintf(json, sizeof(json),
-                 "{\"ok\":true,\"message\":\"Wi-Fi connected\",\"ip\":\"%s\"}",
+                 "{\"ok\":true,\"message\":\"Wi-Fi connected\","
+                 "\"ip\":\"%s\"}",
                  result.ip);
         send_json(job->req, 200, json);
         httpd_req_async_handler_complete(job->req);
 
-        /* HTTP 成功响应发出后再延迟关闭 SoftAP，避免浏览器收不到结果。 */
-        wifi_manager_schedule_ap_shutdown();
+        /* 响应发出后再关闭 SoftAP，避免浏览器收不到成功结果。 */
+        wifi_manager_schedule_portal_stop();
+    } else if (connected) {
+        ESP_LOGE(TAG, "save verified Wi-Fi config failed: %s",
+                 esp_err_to_name(err));
+        send_json(job->req, 500,
+                  "{\"ok\":false,\"message\":\"Failed to save Wi-Fi config\"}");
+        httpd_req_async_handler_complete(job->req);
     } else if (err == ESP_ERR_INVALID_STATE) {
         send_json(
             job->req, 409,
@@ -371,16 +255,17 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    if (!parse_wifi_form(body, job->ssid, sizeof(job->ssid), job->password,
-                         sizeof(job->password))) {
+    if (!parse_wifi_form(body, job->wifi.ssid, sizeof(job->wifi.ssid),
+                         job->wifi.password, sizeof(job->wifi.password))) {
         ESP_LOGW(TAG, "invalid wifi_config form");
         free(job);
         send_json(req, 400,
                   "{\"ok\":false,\"message\":\"Invalid SSID or password\"}");
         return ESP_OK;
     }
+    job->wifi.initialized = true;
 
-    ESP_LOGI(TAG, "received wifi_config request, ssid=%s", job->ssid);
+    ESP_LOGI(TAG, "received wifi_config request, ssid=%s", job->wifi.ssid);
 
     /*
      * 开启异步请求后，HTTP server 允许当前 handler 返回，后续由任务发送响应并
@@ -397,8 +282,8 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
     }
 
     /* 单独任务栈稍大一些，给 Wi-Fi 验证、JSON 拼接和日志留余量。 */
-    BaseType_t ok =
-        xTaskCreate(wifi_config_task, "wifi_cfg_task", 6144, job, 4, NULL);
+    BaseType_t ok = xTaskCreate(wifi_config_task, "wifi_cfg_task", 6144, job, 4,
+                                NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "create wifi_config task failed");
         send_json(

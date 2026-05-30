@@ -1,4 +1,6 @@
 ---
 BasedOnStyle:  Google
 IndentWidth:   4
+PenaltyBreakAssignment: 1000000
+
 ...

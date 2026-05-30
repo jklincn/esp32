@@ -1,4 +1,5 @@
 build/
+build_codex/
 sdkconfig
 sdkconfig.old
 

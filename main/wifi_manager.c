@@ -11,21 +11,25 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "nvs_config.h"
 
 /* 事件组 bit：事件回调通过它们把异步连接结果通知给阻塞等待的连接流程。 */
 #define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT BIT1
 
-/* 单次连接验证最多等待 15 秒，期间断线事件会触发有限重试。 */
-#define WIFI_CONNECT_TIMEOUT_MS 15000
+/* 单次连接验证最多等待 10 秒，期间断线事件会触发有限重试。 */
+#define WIFI_CONNECT_TIMEOUT_MS 10000
 #define WIFI_CONNECT_MAX_RETRY 5
 
 /* 配网 SoftAP 参数。authmode 使用 WIFI_AUTH_OPEN，因此热点不需要密码。 */
 #define WIFI_AP_CHANNEL 1
 #define WIFI_AP_MAX_CONN 4
 
-static const char *TAG = "wifi_manager";
+static const char *TAG = "[wifi_manager]";
+
+typedef enum {
+    WIFI_RUN_PORTAL = 0,
+    WIFI_RUN_CONNECTING,
+    WIFI_RUN_STA,
+} wifi_run_state_t;
 
 /*
  * s_wifi_event_group: STA 连接成功/失败事件同步。
@@ -43,13 +47,14 @@ static esp_netif_t *s_ap_netif;
 /* Wi-Fi driver 是否已启动；用于避免重复 esp_wifi_start()。 */
 static bool s_wifi_started;
 
-/* true 表示正在执行显式连接验证，事件回调会按验证流程处理断线和重试。 */
-static bool s_connecting;
+/* 事件回调依据运行状态决定断线后是重试、自动重连还是保持配网模式。 */
+static wifi_run_state_t s_run_state = WIFI_RUN_PORTAL;
 static int s_retry_count;
+static bool s_skip_disconnect_once;
 
 /* 对外状态缓存。写入通过 state_set_*，读取通过 wifi_manager_get_status()。 */
 static wifi_manager_status_t s_status = {
-    .mode = WIFI_MANAGER_MODE_CONFIG,
+    .mode = WIFI_MANAGER_MODE_PORTAL,
     .sta_connected = false,
     .sta_ip = "0.0.0.0",
     .ap_enabled = false,
@@ -90,85 +95,85 @@ static void state_set_mode(wifi_manager_mode_t mode, bool ap_enabled,
     xSemaphoreGive(s_state_lock);
 }
 
-/*
- * Wi-Fi/IP 事件统一入口。
- * esp_wifi_connect() 只发起连接请求，真正结果通过这里转换为状态和事件组 bit。
- */
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data) {
-    (void)arg;
+static void retry_connection(void) {
+    if (s_retry_count >= WIFI_CONNECT_MAX_RETRY) {
+        ESP_LOGW(TAG, "STA connection retry limit reached");
+        return;
+    }
 
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+    s_retry_count++;
+    ESP_LOGI(TAG, "retrying STA connection, attempt=%d", s_retry_count);
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_connect retry failed: %s",
+                 esp_err_to_name(err));
+    }
+}
+
+static void reconnect_sta(void) {
+    ESP_LOGI(TAG, "reconnecting STA in normal mode");
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "normal reconnect failed: %s", esp_err_to_name(err));
+    }
+}
+
+static void wifi_sta_event_handler(void *arg, esp_event_base_t event_base,
+                                   int32_t event_id, void *event_data) {
+    (void)arg;
+    (void)event_base;
+
+    if (event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "STA started");
         return;
     }
 
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        wifi_event_sta_disconnected_t *event =
-            (wifi_event_sta_disconnected_t *)event_data;
-        ESP_LOGW(TAG, "STA disconnected, reason=%d",
-                 event ? event->reason : -1);
-        state_set_sta_disconnected();
-        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)
+        event_data;
+    ESP_LOGW(TAG, "STA disconnected, reason=%d", event ? event->reason : -1);
+    state_set_sta_disconnected();
+    xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
 
-        /*
-         * 显式连接验证期间，断线通常表示密码错误、信号问题或路由器拒绝。
-         * 这里做有限重试，重试耗尽后设置失败 bit 唤醒等待方。
-         */
-        if (s_connecting) {
-            if (s_retry_count < WIFI_CONNECT_MAX_RETRY) {
-                s_retry_count++;
-                ESP_LOGI(TAG, "retrying STA connection, attempt=%d",
-                         s_retry_count);
-                esp_err_t err = esp_wifi_connect();
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "esp_wifi_connect retry failed: %s",
-                             esp_err_to_name(err));
-                    xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-                }
-            } else {
-                ESP_LOGW(TAG, "STA connection failed after retries");
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-            }
-        } else {
-            /*
-             * 普通 STA 模式下发生掉线时，保持系统运行并自动重连。
-             * CONFIG 模式不强制重连，因为用户可能正在提交新的凭据。
-             */
-            wifi_manager_status_t status;
-            wifi_manager_get_status(&status);
-            if (status.mode == WIFI_MANAGER_MODE_STA) {
-                ESP_LOGI(TAG, "reconnecting STA in normal mode");
-                esp_err_t err = esp_wifi_connect();
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "normal reconnect failed: %s",
-                             esp_err_to_name(err));
-                }
-            }
-        }
+    if (s_skip_disconnect_once) {
+        s_skip_disconnect_once = false;
         return;
     }
 
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
+    if (s_run_state == WIFI_RUN_CONNECTING) {
+        retry_connection();
+    } else if (s_run_state == WIFI_RUN_STA) {
+        reconnect_sta();
+    }
+}
+
+static void wifi_ap_event_handler(void *arg, esp_event_base_t event_base,
+                                  int32_t event_id, void *event_data) {
+    (void)arg;
+    (void)event_base;
+    (void)event_data;
+
+    if (event_id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "SoftAP started");
-        return;
-    }
-
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STOP) {
+    } else if (event_id == WIFI_EVENT_AP_STOP) {
         ESP_LOGI(TAG, "SoftAP stopped");
         state_set_mode(WIFI_MANAGER_MODE_STA, false, NULL);
-        return;
     }
+}
 
-    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        char ip[16] = "0.0.0.0";
-        esp_ip4addr_ntoa(&event->ip_info.ip, ip, sizeof(ip));
-        ESP_LOGI(TAG, "STA got IP: %s", ip);
-        s_retry_count = 0;
-        state_set_sta_connected(ip);
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-    }
+static void ip_event_handler(void *arg, esp_event_base_t event_base,
+                             int32_t event_id, void *event_data) {
+    (void)arg;
+    (void)event_base;
+    (void)event_id;
+
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+    char ip[16] = "0.0.0.0";
+    esp_ip4addr_ntoa(&event->ip_info.ip, ip, sizeof(ip));
+    ESP_LOGI(TAG, "STA got IP: %s", ip);
+    s_retry_count = 0;
+    s_skip_disconnect_once = false;
+    state_set_sta_connected(ip);
+    xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
 }
 
 /*
@@ -203,9 +208,20 @@ static esp_err_t configure_ap_ip(void) {
     return ESP_OK;
 }
 
-/* 将用户提交的 SSID/密码填入 ESP-IDF 的 wifi_config_t，并设置认证兼容参数。 */
-static void fill_sta_config(wifi_config_t *wifi_config, const char *ssid,
-                            const char *password) {
+static bool is_valid_sta_credentials(const char *ssid, const char *password) {
+    return ssid[0] != '\0' && password[0] != '\0' &&
+           strlen(ssid) <= WIFI_CFG_MAX_SSID_LEN &&
+           strlen(password) <= WIFI_CFG_MAX_PASSWORD_LEN;
+}
+
+/* 将 SSID/密码填入 ESP-IDF 的 wifi_config_t，并设置认证兼容参数。 */
+static esp_err_t build_sta_config(wifi_config_t *wifi_config, const char *ssid,
+                                  const char *password) {
+    if (!is_valid_sta_credentials(ssid, password)) {
+        ESP_LOGE(TAG, "invalid STA credentials");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     memset(wifi_config, 0, sizeof(*wifi_config));
     size_t ssid_len = strlen(ssid);
     size_t password_len = strlen(password);
@@ -213,6 +229,7 @@ static void fill_sta_config(wifi_config_t *wifi_config, const char *ssid,
     memcpy(wifi_config->sta.password, password, password_len);
     wifi_config->sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     wifi_config->sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    return ESP_OK;
 }
 
 /* 确保 Wi-Fi driver 已启动。多个路径会调用该函数，因此需要幂等保护。 */
@@ -232,87 +249,91 @@ static esp_err_t ensure_wifi_started(void) {
 }
 
 /*
- * 使用给定 SSID/密码发起 STA 连接，并阻塞等待成功、失败或超时。
- * 该函数只验证凭据是否可连接，不负责保存配置。
+ * 使用给定 STA 配置发起连接，并阻塞等待成功、失败或超时。
+ * 该函数只负责驱动连接流程，不负责构造配置或保存配置。
  */
-static esp_err_t connect_sta_blocking(const char *ssid, const char *password,
-                                      int timeout_ms) {
-    if (ssid == NULL || password == NULL || ssid[0] == '\0' ||
-        password[0] == '\0' || strlen(ssid) > WIFI_CFG_MAX_SSID_LEN ||
-        strlen(password) > WIFI_CFG_MAX_PASSWORD_LEN) {
-        ESP_LOGE(TAG, "invalid STA credentials");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    wifi_config_t wifi_config;
-    fill_sta_config(&wifi_config, ssid, password);
-
+static esp_err_t connect_sta_blocking(wifi_config_t *wifi_config,
+                                      int timeout_ms,
+                                      wifi_run_state_t success_state,
+                                      wifi_run_state_t failure_state) {
     /* 清理上一次连接结果，避免旧 bit 让本次等待立即返回。 */
-    xEventGroupClearBits(s_wifi_event_group,
-                         WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
+    xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     state_set_sta_disconnected();
     s_retry_count = 0;
-    s_connecting = true;
+    s_run_state = failure_state;
 
     /*
      * 主动断开旧连接后再设置新配置。未启动或本来未连接都不是致命错误，
      * 因为后面会重新 set_config/start/connect。
      */
+    s_skip_disconnect_once = false;
+
     esp_err_t err = esp_wifi_disconnect();
+    if (err == ESP_OK) {
+        s_skip_disconnect_once = true;
+    }
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED &&
         err != ESP_ERR_WIFI_NOT_CONNECT) {
         ESP_LOGW(TAG, "disconnect before connect failed: %s",
                  esp_err_to_name(err));
     }
 
-    err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    err = esp_wifi_set_config(WIFI_IF_STA, wifi_config);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set STA config failed: %s", esp_err_to_name(err));
-        s_connecting = false;
+        s_skip_disconnect_once = false;
+        s_run_state = failure_state;
         return err;
     }
 
     err = ensure_wifi_started();
     if (err != ESP_OK) {
-        s_connecting = false;
+        s_skip_disconnect_once = false;
+        s_run_state = failure_state;
         return err;
     }
 
-    ESP_LOGI(TAG, "connecting STA to ssid=%s", ssid);
+    xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    s_retry_count = 0;
+    s_run_state = WIFI_RUN_CONNECTING;
+
+    ESP_LOGI(TAG, "connecting STA to ssid=%s", wifi_config->sta.ssid);
     err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
-        s_connecting = false;
+        s_skip_disconnect_once = false;
+        s_run_state = failure_state;
         return err;
     }
 
-    /* 等待事件回调设置成功或失败 bit；超时则认为本次验证失败。 */
-    EventBits_t bits = xEventGroupWaitBits(
-        s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE,
-        pdFALSE, pdMS_TO_TICKS(timeout_ms));
-
-    s_connecting = false;
+    /* 等待 IP 事件设置成功 bit；超时则认为本次验证失败。 */
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                           WIFI_CONNECTED_BIT, pdTRUE, pdFALSE,
+                                           pdMS_TO_TICKS(timeout_ms));
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "STA connected");
+        s_run_state = success_state;
         return ESP_OK;
     }
 
-    if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGW(TAG, "STA connection failed");
-        return ESP_FAIL;
-    }
-
     ESP_LOGW(TAG, "STA connection timed out");
+    s_skip_disconnect_once = false;
+    s_run_state = failure_state;
+    esp_wifi_disconnect();
     return ESP_ERR_TIMEOUT;
 }
 
-/* 使用 NVS 中已保存的配置启动普通 STA
- * 模式。失败时由上层决定是否回落到配网模式。 */
-static esp_err_t start_sta_mode(const wifi_cfg_t *cfg) {
+esp_err_t wifi_manager_start_sta(const wifi_cfg_t *cfg) {
     ESP_LOGI(TAG, "starting STA mode");
 
-    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    wifi_config_t wifi_config;
+    esp_err_t err = build_sta_config(&wifi_config, cfg->ssid, cfg->password);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set WIFI_MODE_STA failed: %s", esp_err_to_name(err));
         return err;
@@ -320,8 +341,8 @@ static esp_err_t start_sta_mode(const wifi_cfg_t *cfg) {
 
     state_set_mode(WIFI_MANAGER_MODE_STA, false, NULL);
 
-    err =
-        connect_sta_blocking(cfg->ssid, cfg->password, WIFI_CONNECT_TIMEOUT_MS);
+    err = connect_sta_blocking(&wifi_config, WIFI_CONNECT_TIMEOUT_MS,
+                               WIFI_RUN_STA, WIFI_RUN_PORTAL);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "saved Wi-Fi connection failed: %s",
                  esp_err_to_name(err));
@@ -380,7 +401,7 @@ esp_err_t wifi_manager_init(void) {
     }
 
     /*
-     * 关闭省电可以降低 mDNS/HTTP 在部分路由器下的延迟和丢包概率。
+     * 关闭省电可以降低 HTTP 访问在部分路由器下的延迟和丢包概率。
      * 失败不影响基础联网，所以这里只记录警告。
      */
     err = esp_wifi_set_ps(WIFI_PS_NONE);
@@ -388,22 +409,47 @@ esp_err_t wifi_manager_init(void) {
         ESP_LOGW(TAG, "disable Wi-Fi power save failed: %s",
                  esp_err_to_name(err));
     } else {
-        ESP_LOGI(TAG, "Wi-Fi power save disabled for mDNS reliability");
+        ESP_LOGI(TAG, "Wi-Fi power save disabled for HTTP reliability");
     }
 
-    /* 注册 WIFI_EVENT 和 STA GOT_IP 事件，连接状态完全由回调驱动。 */
-    err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                              wifi_event_handler, NULL, NULL);
+    /* STA、AP 和 IP 事件分开注册，启动路线和配网页面路线互不掺杂。 */
+    err = esp_event_handler_instance_register(
+        WIFI_EVENT, WIFI_EVENT_STA_START, wifi_sta_event_handler, NULL, NULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "register WIFI_EVENT handler failed: %s",
+        ESP_LOGE(TAG, "register STA_START handler failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_event_handler_instance_register(
+        WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_sta_event_handler, NULL,
+        NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register STA_DISCONNECTED handler failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_event_handler_instance_register(
+        WIFI_EVENT, WIFI_EVENT_AP_START, wifi_ap_event_handler, NULL, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register AP_START handler failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_event_handler_instance_register(
+        WIFI_EVENT, WIFI_EVENT_AP_STOP, wifi_ap_event_handler, NULL, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register AP_STOP handler failed: %s",
                  esp_err_to_name(err));
         return err;
     }
 
     err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                              wifi_event_handler, NULL, NULL);
+                                              ip_event_handler, NULL, NULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "register IP_EVENT handler failed: %s",
+        ESP_LOGE(TAG, "register STA_GOT_IP handler failed: %s",
                  esp_err_to_name(err));
         return err;
     }
@@ -412,7 +458,7 @@ esp_err_t wifi_manager_init(void) {
     return ESP_OK;
 }
 
-esp_err_t wifi_manager_enter_config_mode(void) {
+esp_err_t wifi_manager_start_portal(void) {
     /* SoftAP 名称带 MAC 后两字节，方便附近有多台设备时区分。 */
     uint8_t mac[6] = {0};
     esp_err_t err = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
@@ -432,7 +478,8 @@ esp_err_t wifi_manager_enter_config_mode(void) {
     ap_config.ap.authmode = WIFI_AUTH_OPEN;
     ap_config.ap.pmf_cfg.required = false;
 
-    ESP_LOGI(TAG, "starting config mode, SoftAP SSID=%s", ap_ssid);
+    ESP_LOGI(TAG, "starting portal mode, SoftAP SSID=%s", ap_ssid);
+    s_run_state = WIFI_RUN_PORTAL;
 
     /* APSTA 模式允许设备一边开热点给用户配网，一边尝试连接用户提交的路由器。 */
     err = esp_wifi_set_mode(WIFI_MODE_APSTA);
@@ -452,37 +499,15 @@ esp_err_t wifi_manager_enter_config_mode(void) {
         return err;
     }
 
-    state_set_mode(WIFI_MANAGER_MODE_CONFIG, true, ap_ssid);
-    ESP_LOGI(TAG, "config mode ready at http://192.168.4.1");
+    state_set_mode(WIFI_MANAGER_MODE_PORTAL, true, ap_ssid);
+    ESP_LOGI(TAG, "portal mode ready at http://192.168.4.1");
     return ESP_OK;
 }
 
-esp_err_t wifi_manager_start(void) {
-    /*
-     * 启动策略：
-     * 1. 有有效 NVS 配置时优先尝试 STA；
-     * 2. STA 连接失败或没有配置时，进入 SoftAP 配网模式。
-     */
-    wifi_cfg_t cfg;
-    esp_err_t err = nvs_config_load_wifi(&cfg);
-    if (err == ESP_OK) {
-        err = start_sta_mode(&cfg);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG, "started with saved STA configuration");
-            return ESP_OK;
-        }
-        ESP_LOGW(TAG, "falling back to config mode");
-    } else {
-        ESP_LOGW(TAG, "no valid saved Wi-Fi config, entering config mode");
-    }
-
-    return wifi_manager_enter_config_mode();
-}
-
-esp_err_t wifi_manager_verify_and_save(const char *ssid, const char *password,
-                                       wifi_manager_connect_result_t *result) {
+esp_err_t wifi_manager_try_connect(const wifi_cfg_t *cfg,
+                                   wifi_manager_connect_result_t *result) {
     if (result == NULL) {
-        ESP_LOGE(TAG, "verify result pointer is NULL");
+        ESP_LOGE(TAG, "connect result pointer is NULL");
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -499,31 +524,32 @@ esp_err_t wifi_manager_verify_and_save(const char *ssid, const char *password,
     wifi_manager_status_t before;
     wifi_manager_get_status(&before);
 
-    /*
-     * 先连接验证，成功后再保存。验证失败时如果之前处于配网模式，需要恢复状态，
-     * 让页面继续显示 SoftAP 可用。
-     */
-    esp_err_t err =
-        connect_sta_blocking(ssid, password, WIFI_CONNECT_TIMEOUT_MS);
+    wifi_run_state_t return_state = before.mode == WIFI_MANAGER_MODE_STA
+                                        ? WIFI_RUN_STA
+                                        : WIFI_RUN_PORTAL;
+
+    /* 验证失败时恢复调用前的运行路线，让配网页面继续可用。 */
+    wifi_config_t wifi_config;
+    esp_err_t err = build_sta_config(&wifi_config, cfg->ssid, cfg->password);
     if (err != ESP_OK) {
         result->ok = false;
         result->err = err;
-        ESP_LOGW(TAG, "submitted Wi-Fi validation failed: %s",
-                 esp_err_to_name(err));
-        if (before.ap_enabled) {
-            state_set_mode(WIFI_MANAGER_MODE_CONFIG, true, before.ap_ssid);
-        }
         xSemaphoreGive(s_connect_lock);
         return err;
     }
 
-    /* 只有真实连上并拿到 IP 的凭据才写入 NVS，避免坏密码覆盖可用配置。 */
-    err = nvs_config_save_wifi(ssid, password);
+    err = connect_sta_blocking(&wifi_config, WIFI_CONNECT_TIMEOUT_MS,
+                               return_state, return_state);
     if (err != ESP_OK) {
         result->ok = false;
         result->err = err;
-        ESP_LOGE(TAG, "saving verified Wi-Fi config failed: %s",
+        ESP_LOGW(TAG, "submitted Wi-Fi connection failed: %s",
                  esp_err_to_name(err));
+        if (before.ap_enabled) {
+            state_set_mode(WIFI_MANAGER_MODE_PORTAL, true, before.ap_ssid);
+        } else {
+            state_set_mode(WIFI_MANAGER_MODE_STA, false, NULL);
+        }
         xSemaphoreGive(s_connect_lock);
         return err;
     }
@@ -532,19 +558,13 @@ esp_err_t wifi_manager_verify_and_save(const char *ssid, const char *password,
     result->ok = true;
     result->err = ESP_OK;
     snprintf(result->ip, sizeof(result->ip), "%s", before.sta_ip);
-    state_set_mode(WIFI_MANAGER_MODE_STA, before.ap_enabled, before.ap_ssid);
-    ESP_LOGI(TAG, "submitted Wi-Fi verified and saved, ip=%s", result->ip);
+    ESP_LOGI(TAG, "submitted Wi-Fi verified, ip=%s", result->ip);
 
     xSemaphoreGive(s_connect_lock);
     return ESP_OK;
 }
 
-/*
- * 配网成功后延迟关闭 SoftAP。
- * 延迟的目的是让浏览器先收到 JSON 成功响应；如果立即切换模式，连接在 SoftAP
- * 上的客户端可能会在响应发出前断开。
- */
-static void ap_shutdown_task(void *arg) {
+static void portal_stop_task(void *arg) {
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(2000));
 
@@ -555,10 +575,13 @@ static void ap_shutdown_task(void *arg) {
         return;
     }
 
-    ESP_LOGI(TAG, "turning off SoftAP, keeping STA and HTTP server running");
+    ESP_LOGI(TAG, "stopping portal, keeping STA connected");
+    s_run_state = WIFI_RUN_STA;
     esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "disable SoftAP failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "switch to STA-only mode failed: %s",
+                 esp_err_to_name(err));
+        s_run_state = WIFI_RUN_PORTAL;
     } else {
         state_set_mode(WIFI_MANAGER_MODE_STA, false, NULL);
     }
@@ -566,26 +589,15 @@ static void ap_shutdown_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-void wifi_manager_schedule_ap_shutdown(void) {
-    /* SoftAP 已关闭时无需创建任务。 */
-    wifi_manager_status_t status;
-    wifi_manager_get_status(&status);
-    if (!status.ap_enabled) {
-        return;
-    }
-
-    BaseType_t ok =
-        xTaskCreate(ap_shutdown_task, "ap_shutdown", 3072, NULL, 4, NULL);
+void wifi_manager_schedule_portal_stop(void) {
+    BaseType_t ok = xTaskCreate(portal_stop_task, "portal_stop", 3072, NULL, 4,
+                                NULL);
     if (ok != pdPASS) {
-        ESP_LOGE(TAG, "failed to create ap_shutdown task");
+        ESP_LOGE(TAG, "failed to create portal_stop task");
     }
 }
 
 void wifi_manager_get_status(wifi_manager_status_t *status) {
-    if (status == NULL) {
-        return;
-    }
-
     /* 用互斥锁保护结构体整体复制，避免 Web API 读到半更新状态。 */
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
     *status = s_status;

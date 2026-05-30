@@ -5,13 +5,9 @@
 #include "esp_log.h"
 #include "nvs.h"
 
-static const char *TAG = "nvs_config";
+static const char *TAG = "[nvs_config]";
 
 static bool nvs_config_is_wifi_valid(const wifi_cfg_t *cfg) {
-    if (cfg == NULL) {
-        return false;
-    }
-
     return cfg->initialized && cfg->ssid[0] != '\0' &&
            cfg->password[0] != '\0' &&
            strnlen(cfg->ssid, sizeof(cfg->ssid)) <= WIFI_CFG_MAX_SSID_LEN &&

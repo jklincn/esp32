@@ -1,6 +1,7 @@
 #include "button_manager.h"
 
 #include <inttypes.h>
+#include <stdbool.h>
 
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -8,14 +9,32 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_config.h"
+#include "status_led.h"
 
 #define BOOT_BUTTON_GPIO GPIO_NUM_9
 #define BUTTON_POLL_MS 50
 #define BUTTON_RESTART_MS 1000
 #define BUTTON_CLEAR_WIFI_MS 5000
+#define BUTTON_LED_BLINK_MS 300
 
-static const char *TAG = "button_manager";
+static const char *TAG = "[button_manager]";
 static TaskHandle_t s_button_task;
+
+static void log_status_led_error(esp_err_t err, const char *state) {
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "set status LED %s failed: %s", state,
+                 esp_err_to_name(err));
+    }
+}
+
+static void set_status_led_normal(void) {
+    log_status_led_error(status_led_set_normal(), "normal");
+}
+
+static void set_status_led_clear_ready(bool on) {
+    log_status_led_error(status_led_set_clear_ready(on),
+                         on ? "clear ready" : "off");
+}
 
 static bool button_is_pressed(void) {
     return gpio_get_level(BOOT_BUTTON_GPIO) == 0;
@@ -27,6 +46,9 @@ static void button_task(void *arg) {
 
     // 用于判断“刚按下”和“刚松开”。
     bool last_pressed = false;
+    bool clear_wifi_ready = false;
+    bool clear_ready_led_on = false;
+    TickType_t clear_ready_led_tick = 0;
 
     /*
      * BOOT 按键接在 GPIO9 和 GND 之间，是低电平有效：
@@ -51,8 +73,33 @@ static void button_task(void *arg) {
         if (pressed && !last_pressed) {
             // 记录按下开始时间。
             press_start_tick = now;
+            clear_wifi_ready = false;
+            clear_ready_led_on = false;
+            set_status_led_normal();
 
             ESP_LOGI(TAG, "BOOT button pressed");
+        }
+
+        if (pressed && !clear_wifi_ready) {
+            uint32_t held_ms = pdTICKS_TO_MS(now - press_start_tick);
+            if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
+                clear_wifi_ready = true;
+                clear_ready_led_on = true;
+                clear_ready_led_tick = now;
+                set_status_led_clear_ready(clear_ready_led_on);
+                ESP_LOGI(TAG,
+                         "BOOT button held for 5s, release to clear Wi-Fi "
+                         "config and restart");
+            }
+        }
+
+        if (pressed && clear_wifi_ready) {
+            uint32_t blink_ms = pdTICKS_TO_MS(now - clear_ready_led_tick);
+            if (blink_ms >= BUTTON_LED_BLINK_MS) {
+                clear_ready_led_on = !clear_ready_led_on;
+                clear_ready_led_tick = now;
+                set_status_led_clear_ready(clear_ready_led_on);
+            }
         }
 
         // 当前松开、上一轮按下，说明刚刚松开。
@@ -64,6 +111,10 @@ static void button_task(void *arg) {
 
             // 长按 5 秒：清除 Wi-Fi 配置并重启。
             if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
+                clear_wifi_ready = false;
+                clear_ready_led_on = false;
+                set_status_led_clear_ready(false);
+
                 ESP_LOGW(TAG,
                          "clearing Wi-Fi config by BOOT button long press");
 
@@ -85,6 +136,10 @@ static void button_task(void *arg) {
                 vTaskDelay(pdMS_TO_TICKS(200));
                 esp_restart();
             }
+
+            clear_wifi_ready = false;
+            clear_ready_led_on = false;
+            set_status_led_normal();
         }
 
         // 保存当前状态，下一轮用来判断状态变化。
@@ -111,8 +166,8 @@ esp_err_t button_manager_start(void) {
         return err;
     }
 
-    BaseType_t ok =
-        xTaskCreate(button_task, "button_task", 3072, NULL, 5, &s_button_task);
+    BaseType_t ok = xTaskCreate(button_task, "button_task", 3072, NULL, 5,
+                                &s_button_task);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "create button task failed");
         return ESP_ERR_NO_MEM;

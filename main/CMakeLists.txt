@@ -3,9 +3,12 @@ idf_component_register(
         "button_manager.c"
         "main.c"
         "nvs_config.c"
+        "status_led.c"
         "web_server.c"
         "wifi_manager.c"
     INCLUDE_DIRS "."
+    EMBED_TXTFILES
+        "web/index.html"
     PRIV_REQUIRES
         esp_event
         esp_driver_gpio
