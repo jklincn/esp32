@@ -1,10 +1,9 @@
 #pragma once
 
-#include "wifi/wifi.h"
-
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
+#include "wifi/wifi.h"
 
 #define WIFI_CONNECT_TIMEOUT_MS 10000
 #define WIFI_CONNECT_MAX_RETRY 5
@@ -13,10 +12,9 @@ esp_err_t wifi_core_init_common_resources(void);
 esp_err_t wifi_core_init_driver(void);
 esp_err_t wifi_core_ensure_started(void);
 esp_err_t wifi_event_handler_register(esp_event_handler_t wifi_handler,
-                                          esp_event_handler_t ip_handler);
+                                      esp_event_handler_t ip_handler);
 esp_err_t wifi_core_build_sta_config(wifi_config_t *wifi_config,
-                                     const char *ssid,
-                                     const char *password);
+                                     const char *ssid, const char *password);
 void wifi_core_reset_sta_connection_result(void);
 bool wifi_core_disconnect_sta(void);
 esp_err_t wifi_core_start_sta_connect(wifi_config_t *wifi_config);

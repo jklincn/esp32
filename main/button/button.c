@@ -113,7 +113,7 @@ static void button_task(void *arg) {
     }
 }
 
-esp_err_t button_manager_start(void) {
+esp_err_t button_init(void) {
     gpio_config_t io_conf = {
         .pin_bit_mask = 1ULL << BOOT_BUTTON_GPIO,
         .mode = GPIO_MODE_INPUT,
@@ -136,8 +136,6 @@ esp_err_t button_manager_start(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG,
-             "BOOT button enabled: release before 5s to restart, release "
-             "after 5s to clear Wi-Fi and restart");
+    ESP_LOGI(TAG, "BOOT button enabled");
     return ESP_OK;
 }

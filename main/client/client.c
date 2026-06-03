@@ -175,8 +175,8 @@ static void server_heartbeat_task(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(SERVER_HEARTBEAT_INITIAL_DELAY_MS));
 
     while (true) {
-        wifi_manager_status_t status;
-        wifi_manager_get_status(&status);
+        wifi_status_t status;
+        wifi_get_status(&status);
 
         if (status.sta_connected) {
             esp_err_t err = send_heartbeat_post();

@@ -1,5 +1,3 @@
-#include "wifi/wifi_internal.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "wifi/wifi_internal.h"
 
 /* 一次扫描从 Wi-Fi driver 取回的最大 BSS 记录数，随后会按 SSID 去重。 */
 #define WIFI_SCAN_RECORD_LIMIT 32
@@ -44,8 +43,7 @@ static void retry_connection(void) {
     }
 
     s_retry_count++;
-    ESP_LOGI(TAG, "retrying config STA validation, attempt=%d",
-             s_retry_count);
+    ESP_LOGI(TAG, "retrying config STA validation, attempt=%d", s_retry_count);
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "config STA retry failed: %s", esp_err_to_name(err));
@@ -165,7 +163,7 @@ static esp_err_t init_config_wifi(void) {
     }
 
     err = wifi_event_handler_register(config_sta_event_handler,
-                                          config_ip_event_handler);
+                                      config_ip_event_handler);
     if (err != ESP_OK) {
         return err;
     }
@@ -186,7 +184,7 @@ static esp_err_t init_config_wifi(void) {
         return err;
     }
 
-    ESP_LOGI(TAG, "wifi manager initialized in config mode");
+    ESP_LOGI(TAG, "Wi-Fi initialized in config mode");
     return ESP_OK;
 }
 
@@ -232,7 +230,7 @@ static esp_err_t start_config_mode(void) {
 
     wifi_core_set_mode(WIFI_MODE_APSTA, ap_ssid);
     ESP_LOGI(TAG, "portal mode ready at http://192.168.4.1");
-    err = wifi_manager_request_scan();
+    err = wifi_request_scan();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "start initial Wi-Fi scan failed: %s",
                  esp_err_to_name(err));
@@ -240,7 +238,7 @@ static esp_err_t start_config_mode(void) {
     return ESP_OK;
 }
 
-esp_err_t wifi_manager_start_config(void) {
+esp_err_t wifi_start_config(void) {
     esp_err_t err = init_config_wifi();
     if (err != ESP_OK) {
         return err;
@@ -272,8 +270,8 @@ static esp_err_t validate_sta_connection(wifi_config_t *wifi_config) {
     return ESP_OK;
 }
 
-esp_err_t wifi_manager_try_connect(const wifi_cfg_t *cfg,
-                                   wifi_manager_connect_result_t *result) {
+esp_err_t wifi_try_connect(const wifi_cfg_t *cfg,
+                           wifi_connect_result_t *result) {
     if (result == NULL) {
         ESP_LOGE(TAG, "connect result pointer is NULL");
         return ESP_ERR_INVALID_ARG;
@@ -295,13 +293,13 @@ esp_err_t wifi_manager_try_connect(const wifi_cfg_t *cfg,
         return ESP_ERR_INVALID_STATE;
     }
 
-    wifi_manager_status_t before;
-    wifi_manager_get_status(&before);
+    wifi_status_t before;
+    wifi_get_status(&before);
 
     /* 验证失败时恢复调用前的运行路线，让配网页面继续可用。 */
     wifi_config_t wifi_config;
-    esp_err_t err =
-        wifi_core_build_sta_config(&wifi_config, cfg->ssid, cfg->password);
+    esp_err_t err = wifi_core_build_sta_config(&wifi_config, cfg->ssid,
+                                               cfg->password);
     if (err != ESP_OK) {
         result->ok = false;
         result->err = err;
@@ -324,7 +322,7 @@ esp_err_t wifi_manager_try_connect(const wifi_cfg_t *cfg,
         return err;
     }
 
-    wifi_manager_get_status(&before);
+    wifi_get_status(&before);
     result->ok = true;
     result->err = ESP_OK;
     snprintf(result->ip, sizeof(result->ip), "%s", before.sta_ip);
@@ -390,8 +388,8 @@ static esp_err_t scan_nearby_aps(wifi_scan_ap_t *aps, uint16_t max_aps,
         return err;
     }
 
-    wifi_ap_record_t *records =
-        calloc(WIFI_SCAN_RECORD_LIMIT, sizeof(wifi_ap_record_t));
+    wifi_ap_record_t *records = calloc(WIFI_SCAN_RECORD_LIMIT,
+                                       sizeof(wifi_ap_record_t));
     if (records == NULL) {
         ESP_LOGE(TAG, "alloc scan record buffer failed");
         esp_wifi_clear_ap_list();
@@ -411,8 +409,8 @@ static esp_err_t scan_nearby_aps(wifi_scan_ap_t *aps, uint16_t max_aps,
 
     for (uint16_t i = 0; i < record_count && *ap_count < max_aps; i++) {
         char ssid[WIFI_CFG_MAX_SSID_LEN + 1] = {0};
-        size_t ssid_len =
-            strnlen((const char *)records[i].ssid, WIFI_CFG_MAX_SSID_LEN);
+        size_t ssid_len = strnlen((const char *)records[i].ssid,
+                                  WIFI_CFG_MAX_SSID_LEN);
         if (ssid_len == 0) {
             continue;
         }
@@ -458,15 +456,14 @@ static void wifi_scan_task(void *arg) {
     xSemaphoreGive(s_scan_lock);
 
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "background Wi-Fi scan failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGW(TAG, "background Wi-Fi scan failed: %s", esp_err_to_name(err));
     }
     vTaskDelete(NULL);
 }
 
-esp_err_t wifi_manager_request_scan(void) {
+esp_err_t wifi_request_scan(void) {
     if (s_scan_lock == NULL) {
-        ESP_LOGE(TAG, "scan requested before wifi manager init");
+        ESP_LOGE(TAG, "scan requested before Wi-Fi config mode init");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -495,7 +492,7 @@ esp_err_t wifi_manager_request_scan(void) {
     return ESP_ERR_NO_MEM;
 }
 
-void wifi_manager_get_scan_snapshot(wifi_scan_snapshot_t *snapshot) {
+void wifi_get_scan_snapshot(wifi_scan_snapshot_t *snapshot) {
     if (snapshot == NULL) {
         return;
     }
@@ -511,8 +508,7 @@ void wifi_manager_get_scan_snapshot(wifi_scan_snapshot_t *snapshot) {
     if (snapshot->valid) {
         TickType_t age_ticks = xTaskGetTickCount() - s_scan_cache_updated_tick;
         uint64_t age_ms = (uint64_t)age_ticks * portTICK_PERIOD_MS;
-        snapshot->age_ms =
-            age_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)age_ms;
+        snapshot->age_ms = age_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)age_ms;
     }
     xSemaphoreGive(s_scan_lock);
 }

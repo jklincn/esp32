@@ -1,8 +1,7 @@
-#include "wifi/wifi_internal.h"
-
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "wifi/wifi_internal.h"
 
 static const char *TAG = "[wifi]";
 
@@ -17,8 +16,7 @@ static void retry_connection(void) {
     }
 
     s_retry_count++;
-    ESP_LOGI(TAG, "retrying normal STA connection, attempt=%d",
-             s_retry_count);
+    ESP_LOGI(TAG, "retrying normal STA connection, attempt=%d", s_retry_count);
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "normal STA retry failed: %s", esp_err_to_name(err));
@@ -72,27 +70,6 @@ static void normal_ip_event_handler(void *arg, esp_event_base_t event_base,
     wifi_core_handle_sta_got_ip(event_data);
 }
 
-static esp_err_t init_normal_wifi(void) {
-    esp_err_t err = wifi_core_init_common_resources();
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = wifi_core_init_driver();
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = wifi_event_handler_register(normal_sta_event_handler,
-                                          normal_ip_event_handler);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    ESP_LOGI(TAG, "wifi manager initialized in normal mode");
-    return ESP_OK;
-}
-
 static esp_err_t connect_sta_blocking(wifi_config_t *wifi_config) {
     wifi_core_reset_sta_connection_result();
     s_connecting = true;
@@ -116,12 +93,27 @@ static esp_err_t connect_sta_blocking(wifi_config_t *wifi_config) {
     return ESP_OK;
 }
 
-static esp_err_t start_sta_mode(const wifi_cfg_t *cfg) {
+esp_err_t wifi_start_normal(const wifi_cfg_t *cfg) {
+    esp_err_t err = wifi_core_init_common_resources();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = wifi_core_init_driver();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = wifi_event_handler_register(normal_sta_event_handler,
+                                      normal_ip_event_handler);
+    if (err != ESP_OK) {
+        return err;
+    }
+
     ESP_LOGI(TAG, "starting STA mode");
 
     wifi_config_t wifi_config;
-    esp_err_t err =
-        wifi_core_build_sta_config(&wifi_config, cfg->ssid, cfg->password);
+    err = wifi_core_build_sta_config(&wifi_config, cfg->ssid, cfg->password);
     if (err != ESP_OK) {
         return err;
     }
@@ -142,13 +134,4 @@ static esp_err_t start_sta_mode(const wifi_cfg_t *cfg) {
     }
 
     return ESP_OK;
-}
-
-esp_err_t wifi_manager_start_normal(const wifi_cfg_t *cfg) {
-    esp_err_t err = init_normal_wifi();
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    return start_sta_mode(cfg);
 }

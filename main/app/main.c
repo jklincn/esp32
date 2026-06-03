@@ -1,12 +1,12 @@
 #include <stdbool.h>
 
 #include "button/button.h"
+#include "client/client.h"
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "led/led.h"
-#include "client/client.h"
 #include "storage/storage.h"
 #include "web/web.h"
 #include "wifi/wifi.h"
@@ -60,9 +60,9 @@ static esp_err_t init_common_services(void) {
         return err;
     }
 
-    err = button_manager_start();
+    err = button_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "button manager start failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "button init failed: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -85,7 +85,7 @@ static esp_err_t normal_mode(void) {
         return err;
     }
 
-    err = wifi_manager_start_normal(&saved_wifi_cfg);
+    err = wifi_start_normal(&saved_wifi_cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "saved Wi-Fi failed: %s", esp_err_to_name(err));
         return err;
@@ -115,7 +115,7 @@ static esp_err_t normal_mode(void) {
 }
 
 static esp_err_t config_mode(void) {
-    esp_err_t err = wifi_manager_start_config();
+    esp_err_t err = wifi_start_config();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "config Wi-Fi failed: %s", esp_err_to_name(err));
         return err;
@@ -166,8 +166,7 @@ void app_main(void) {
         ESP_LOGE(TAG, "application startup failed: %s", esp_err_to_name(err));
         esp_err_t led_err = system_led_set(SYSTEM_LED_EFFECT_RED);
         if (led_err != ESP_OK) {
-            ESP_LOGE(TAG, "set error LED failed: %s",
-                     esp_err_to_name(led_err));
+            ESP_LOGE(TAG, "set error LED failed: %s", esp_err_to_name(led_err));
         }
         return;
     }

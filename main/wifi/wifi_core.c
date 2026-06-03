@@ -19,9 +19,8 @@ static SemaphoreHandle_t s_state_lock;
 static esp_netif_t *s_sta_netif;
 static bool s_wifi_started;
 
-/* 对外状态缓存。写入通过 wifi_core_set_*，读取通过 wifi_manager_get_status()。
- */
-static wifi_manager_status_t s_status = {
+/* 对外状态缓存。写入通过 wifi_core_set_*，读取通过 wifi_get_status()。 */
+static wifi_status_t s_status = {
     .mode = WIFI_MODE_APSTA,
     .sta_connected = false,
     .sta_ip = "0.0.0.0",
@@ -186,7 +185,8 @@ esp_err_t wifi_core_init_driver(void) {
         return err;
     }
 
-    // 使用 RAM 存储 Wi-Fi 配置，避免 esp_wifi_set_config() 自动写入系统 Wi-Fi NVS
+    // 使用 RAM 存储 Wi-Fi 配置，避免 esp_wifi_set_config() 自动写入系统 Wi-Fi
+    // NVS
     err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "set Wi-Fi storage RAM failed: %s", esp_err_to_name(err));
@@ -197,7 +197,7 @@ esp_err_t wifi_core_init_driver(void) {
 }
 
 esp_err_t wifi_event_handler_register(esp_event_handler_t wifi_handler,
-                                          esp_event_handler_t ip_handler) {
+                                      esp_event_handler_t ip_handler) {
     esp_err_t err = esp_event_handler_instance_register(
         WIFI_EVENT, WIFI_EVENT_STA_START, wifi_handler, NULL, NULL);
     if (err != ESP_OK) {
@@ -225,7 +225,7 @@ esp_err_t wifi_event_handler_register(esp_event_handler_t wifi_handler,
     return ESP_OK;
 }
 
-void wifi_manager_get_status(wifi_manager_status_t *status) {
+void wifi_get_status(wifi_status_t *status) {
     /* 用互斥锁保护结构体整体复制，避免 Web API 读到半更新状态。 */
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
     *status = s_status;

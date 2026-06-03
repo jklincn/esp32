@@ -82,8 +82,8 @@ static void system_led_task(void *arg) {
             if (elapsed_ms >= SYSTEM_LED_BLINK_MS) {
                 blink_on = !blink_on;
                 last_toggle_tick = now;
-                esp_err_t err = write_effect(
-                        blink_on ? active_effect : SYSTEM_LED_EFFECT_OFF);
+                esp_err_t err = write_effect(blink_on ? active_effect
+                                                      : SYSTEM_LED_EFFECT_OFF);
                 if (err != ESP_OK) {
                     ESP_LOGW(TAG, "blink RGB LED failed: %s",
                              esp_err_to_name(err));

@@ -5,12 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "storage/storage.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "storage/storage.h"
 #include "wifi/wifi.h"
 
 /* POST /api/wifi_config 的表单体上限。当前只包含 ssid/password，256
@@ -213,8 +213,8 @@ static esp_err_t root_handler(httpd_req_t *req) {
 
 /* GET /api/status：返回当前 Wi-Fi 状态，供页面轮询刷新。 */
 static esp_err_t status_handler(httpd_req_t *req) {
-    wifi_manager_status_t status;
-    wifi_manager_get_status(&status);
+    wifi_status_t status;
+    wifi_get_status(&status);
 
     char json[160];
     snprintf(json, sizeof(json),
@@ -230,7 +230,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
 static esp_err_t wifi_scan_handler(httpd_req_t *req) {
     bool refresh = scan_refresh_requested(req);
     if (refresh) {
-        esp_err_t err = wifi_manager_request_scan();
+        esp_err_t err = wifi_request_scan();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "request Wi-Fi scan failed: %s",
                      esp_err_to_name(err));
@@ -242,9 +242,9 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
     }
 
     wifi_scan_snapshot_t snapshot;
-    wifi_manager_get_scan_snapshot(&snapshot);
+    wifi_get_scan_snapshot(&snapshot);
     if (!snapshot.valid && !snapshot.scanning) {
-        esp_err_t err = wifi_manager_request_scan();
+        esp_err_t err = wifi_request_scan();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "request initial Wi-Fi scan failed: %s",
                      esp_err_to_name(err));
@@ -253,7 +253,7 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
                       "scan\"}");
             return ESP_OK;
         }
-        wifi_manager_get_scan_snapshot(&snapshot);
+        wifi_get_scan_snapshot(&snapshot);
     }
 
     const char *last_error = snapshot.last_error == ESP_OK
@@ -272,8 +272,7 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
              (unsigned long)snapshot.age_ms, last_error);
     esp_err_t err = httpd_resp_sendstr_chunk(req, head);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "send scan JSON header failed: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "send scan JSON header failed: %s", esp_err_to_name(err));
         return ESP_OK;
     }
 
@@ -290,8 +289,8 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req) {
         snprintf(item, sizeof(item),
                  "%s{\"ssid\":\"%s\",\"rssi\":%d,\"channel\":%u,"
                  "\"password_required\":%s}",
-                 sent_count == 0 ? "" : ",", escaped_ssid,
-                 snapshot.aps[i].rssi, snapshot.aps[i].channel,
+                 sent_count == 0 ? "" : ",", escaped_ssid, snapshot.aps[i].rssi,
+                 snapshot.aps[i].channel,
                  snapshot.aps[i].password_required ? "true" : "false");
         err = httpd_resp_sendstr_chunk(req, item);
         if (err != ESP_OK) {
@@ -317,11 +316,11 @@ static void wifi_config_task(void *arg) {
     bool restart_after_response = false;
 
     /*
-     * Wi-Fi manager 只负责连接验证；验证成功后由这里保存 NVS 并关闭配网页面。
+     * Wi-Fi 模块只负责连接验证；验证成功后由这里保存 NVS 并关闭配网页面。
      * 任务里根据错误类型返回不同 JSON，前端据此显示成功、失败或并发冲突。
      */
-    wifi_manager_connect_result_t result;
-    esp_err_t err = wifi_manager_try_connect(&job->wifi, &result);
+    wifi_connect_result_t result;
+    esp_err_t err = wifi_try_connect(&job->wifi, &result);
     bool connected = err == ESP_OK && result.ok;
 
     if (connected) {
@@ -409,8 +408,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
                          job->wifi.password, sizeof(job->wifi.password))) {
         ESP_LOGW(TAG, "invalid wifi_config form");
         free(job);
-        send_json(req, 400,
-                  "{\"ok\":false,\"message\":\"Invalid SSID\"}");
+        send_json(req, 400, "{\"ok\":false,\"message\":\"Invalid SSID\"}");
         return ESP_OK;
     }
     job->wifi.initialized = true;
