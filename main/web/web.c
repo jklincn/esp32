@@ -8,7 +8,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"  // IWYU pragma: keep
 #include "freertos/task.h"
 #include "storage/storage.h"
 #include "wifi/wifi.h"

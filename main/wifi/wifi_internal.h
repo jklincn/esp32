@@ -1,9 +1,10 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "esp_err.h"
-#include "esp_event.h"
-#include "esp_wifi.h"
-#include "wifi/wifi.h"
+#include "esp_event_base.h"
+#include "esp_wifi_types_generic.h"
 
 #define WIFI_CONNECT_TIMEOUT_MS 10000
 #define WIFI_CONNECT_MAX_RETRY 5

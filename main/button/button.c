@@ -6,7 +6,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"  // IWYU pragma: keep
 #include "freertos/task.h"
 #include "led/led.h"
 #include "storage/storage.h"

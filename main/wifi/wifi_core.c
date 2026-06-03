@@ -4,9 +4,10 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"  // IWYU pragma: keep
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
+#include "wifi/wifi.h"
 #include "wifi/wifi_internal.h"
 
 /* 事件组 bit：事件回调通过它们把异步连接结果通知给阻塞等待的连接流程。 */

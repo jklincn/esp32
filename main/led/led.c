@@ -2,14 +2,13 @@
 
 #include <stdbool.h>
 
-#include "driver/gpio.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"  // IWYU pragma: keep
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "led_strip.h"
 
-#define SYSTEM_LED_GPIO GPIO_NUM_8
+#define SYSTEM_LED_GPIO 8
 #define SYSTEM_LED_RESOLUTION_HZ 10000000
 #define SYSTEM_LED_MEM_BLOCK_SYMBOLS 64
 #define SYSTEM_LED_BRIGHTNESS 10

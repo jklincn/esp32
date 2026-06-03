@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
-#include "esp_wifi_types.h"
+#include "esp_wifi_types_generic.h"
 #include "storage/storage.h"
 
 #define WIFI_SCAN_MAX_APS 20

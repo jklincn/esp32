@@ -7,9 +7,10 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"  // IWYU pragma: keep
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "wifi/wifi.h"
 #include "wifi/wifi_internal.h"
 
 /* 一次扫描从 Wi-Fi driver 取回的最大 BSS 记录数，随后会按 SSID 去重。 */
