@@ -27,6 +27,9 @@ esp_err_t app_nvs_init(void);
 // 判断读取 Wi-Fi 配置失败是否代表“没有可用配置”，调用方可据此进入配网模式
 bool app_nvs_is_wifi_config_unavailable(esp_err_t err);
 
+// 检查 NVS 中是否存在可用 Wi-Fi 配置，不向调用方返回配置内容
+esp_err_t app_nvs_check_wifi_config(void);
+
 // 从 NVS 读取 Wi-Fi 配置
 esp_err_t app_nvs_load_wifi(wifi_cfg_t *cfg);
 

@@ -69,11 +69,14 @@ idf_component_register(
         "client/client.c"
         "storage/storage.c"
         "web/web.c"
-        "wifi/wifi.c"
+        "wifi/wifi_core.c"
+        "wifi/wifi_normal.c"
+        "wifi/wifi_config.c"
     INCLUDE_DIRS "."
     PRIV_INCLUDE_DIRS "${CMAKE_CURRENT_BINARY_DIR}"
     EMBED_TXTFILES
-        "web/index.html"
+        "web/config.html"
+        "web/normal.html"
     PRIV_REQUIRES
         esp_event
         esp_driver_gpio

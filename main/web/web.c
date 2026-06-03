@@ -25,10 +25,20 @@
 
 static const char *TAG = "[web]";
 
-extern const uint8_t web_index_html_start[] asm("_binary_index_html_start");
+extern const uint8_t web_config_html_start[] asm("_binary_config_html_start");
+extern const uint8_t web_normal_html_start[] asm("_binary_normal_html_start");
 
 /* HTTP server 句柄；非 NULL 表示服务已经启动。 */
 static httpd_handle_t s_server;
+static web_server_mode_t s_mode;
+
+static esp_err_t fail_start(esp_err_t err) {
+    if (s_server != NULL) {
+        httpd_stop(s_server);
+        s_server = NULL;
+    }
+    return err;
+}
 
 /*
  * Wi-Fi 配置请求的异步任务参数。
@@ -188,13 +198,15 @@ static bool parse_wifi_form(char *body, char *ssid, size_t ssid_len,
     return ssid[0] != '\0';
 }
 
-/* GET /：返回内置 HTML 配网页面。 */
-static esp_err_t index_handler(httpd_req_t *req) {
+/* GET /：返回当前启动模式对应的内置 HTML 页面。 */
+static esp_err_t root_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    const char *html = (const char *)web_index_html_start;
+    const char *html = s_mode == WEB_SERVER_MODE_CONFIG
+                           ? (const char *)web_config_html_start
+                           : (const char *)web_normal_html_start;
     esp_err_t err = httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "send index page failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "send root page failed: %s", esp_err_to_name(err));
     }
     return err;
 }
@@ -204,13 +216,11 @@ static esp_err_t status_handler(httpd_req_t *req) {
     wifi_manager_status_t status;
     wifi_manager_get_status(&status);
 
-    char json[192];
+    char json[160];
     snprintf(json, sizeof(json),
-             "{\"mode\":\"%s\",\"sta_connected\":%s,\"sta_ip\":\"%s\",\"ap_"
-             "enabled\":%s}",
-             status.mode == WIFI_MANAGER_MODE_PORTAL ? "config" : "sta",
-             status.sta_connected ? "true" : "false", status.sta_ip,
-             status.ap_enabled ? "true" : "false");
+             "{\"mode\":\"%s\",\"sta_connected\":%s,\"sta_ip\":\"%s\"}",
+             status.mode == WIFI_MODE_APSTA ? "config" : "sta",
+             status.sta_connected ? "true" : "false", status.sta_ip);
 
     send_json(req, 200, json);
     return ESP_OK;
@@ -436,7 +446,7 @@ static esp_err_t wifi_config_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-esp_err_t web_server_start(void) {
+esp_err_t web_server_start(web_server_mode_t mode) {
     /* 防止重复启动 HTTP server；重复调用视为成功。 */
     if (s_server != NULL) {
         ESP_LOGW(TAG, "HTTP server already started");
@@ -455,19 +465,14 @@ esp_err_t web_server_start(void) {
         ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
         return err;
     }
+    s_mode = mode;
 
     /* 路由表使用局部 const 结构体注册；注册后 ESP HTTP server 会复制必要信息。
      */
-    const httpd_uri_t index_uri = {
+    const httpd_uri_t root_uri = {
         .uri = "/",
         .method = HTTP_GET,
-        .handler = index_handler,
-        .user_ctx = NULL,
-    };
-    const httpd_uri_t wifi_config_uri = {
-        .uri = "/api/wifi_config",
-        .method = HTTP_POST,
-        .handler = wifi_config_handler,
+        .handler = root_handler,
         .user_ctx = NULL,
     };
     const httpd_uri_t status_uri = {
@@ -476,35 +481,46 @@ esp_err_t web_server_start(void) {
         .handler = status_handler,
         .user_ctx = NULL,
     };
-    const httpd_uri_t wifi_scan_uri = {
-        .uri = "/api/wifi_scan",
-        .method = HTTP_GET,
-        .handler = wifi_scan_handler,
-        .user_ctx = NULL,
-    };
-    err = httpd_register_uri_handler(s_server, &index_uri);
+    err = httpd_register_uri_handler(s_server, &root_uri);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "register / failed: %s", esp_err_to_name(err));
-        return err;
-    }
-    err = httpd_register_uri_handler(s_server, &wifi_config_uri);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "register /api/wifi_config failed: %s",
-                 esp_err_to_name(err));
-        return err;
+        return fail_start(err);
     }
     err = httpd_register_uri_handler(s_server, &status_uri);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "register /api/status failed: %s", esp_err_to_name(err));
-        return err;
+        return fail_start(err);
     }
-    err = httpd_register_uri_handler(s_server, &wifi_scan_uri);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "register /api/wifi_scan failed: %s",
-                 esp_err_to_name(err));
-        return err;
+
+    if (mode == WEB_SERVER_MODE_CONFIG) {
+        const httpd_uri_t wifi_config_uri = {
+            .uri = "/api/wifi_config",
+            .method = HTTP_POST,
+            .handler = wifi_config_handler,
+            .user_ctx = NULL,
+        };
+        const httpd_uri_t wifi_scan_uri = {
+            .uri = "/api/wifi_scan",
+            .method = HTTP_GET,
+            .handler = wifi_scan_handler,
+            .user_ctx = NULL,
+        };
+        err = httpd_register_uri_handler(s_server, &wifi_config_uri);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "register /api/wifi_config failed: %s",
+                     esp_err_to_name(err));
+            return fail_start(err);
+        }
+        err = httpd_register_uri_handler(s_server, &wifi_scan_uri);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "register /api/wifi_scan failed: %s",
+                     esp_err_to_name(err));
+            return fail_start(err);
+        }
     }
-    ESP_LOGI(TAG, "HTTP server started on port %d", config.server_port);
+    ESP_LOGI(TAG, "HTTP server started on port %d in %s mode",
+             config.server_port,
+             mode == WEB_SERVER_MODE_CONFIG ? "config" : "normal");
 
     return ESP_OK;
 }

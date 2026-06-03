@@ -5,21 +5,9 @@
 
 #include "storage/storage.h"
 #include "esp_err.h"
+#include "esp_wifi_types.h"
 
 #define WIFI_SCAN_MAX_APS 20
-
-/**
- * @brief Wi-Fi 管理器当前工作模式。
- *
- * PORTAL 模式会同时开启 SoftAP，供手机/电脑连接设备并提交新的 Wi-Fi
- * 凭据；STA 模式表示设备主要作为普通 Wi-Fi 客户端接入路由器。
- */
-typedef enum {
-    /** 配网页面模式：SoftAP 开启，通常可通过 http://192.168.4.1 访问。 */
-    WIFI_MANAGER_MODE_PORTAL = 0,
-    /** 普通联网模式：设备使用已保存或刚验证成功的 Wi-Fi 凭据连接路由器。 */
-    WIFI_MANAGER_MODE_STA,
-} wifi_manager_mode_t;
 
 /**
  * @brief 对外暴露的 Wi-Fi 运行状态快照。
@@ -28,14 +16,12 @@ typedef enum {
  * 适合 HTTP 状态接口读取，不应被调用方长期缓存后当作实时状态使用。
  */
 typedef struct {
-    /** 当前管理器模式，决定页面显示和断线后的重连策略。 */
-    wifi_manager_mode_t mode;
+    /** 当前 Wi-Fi 模式，决定页面显示和断线后的重连策略。 */
+    wifi_mode_t mode;
     /** STA 是否已经拿到 IP；只有收到 IP_EVENT_STA_GOT_IP 后才会置 true。 */
     bool sta_connected;
     /** STA IPv4 字符串，例如 "192.168.1.23"；未连接时为 "0.0.0.0"。 */
     char sta_ip[16];
-    /** SoftAP 是否开启；配网成功后会延迟关闭，只保留 STA。 */
-    bool ap_enabled;
     /** SoftAP SSID；SoftAP 关闭时为空字符串。 */
     char ap_ssid[33];
 } wifi_manager_status_t;
@@ -93,31 +79,22 @@ typedef struct {
 } wifi_scan_snapshot_t;
 
 /**
- * @brief 初始化 Wi-Fi 管理器内部资源。
- *
- * 会创建事件组、互斥锁、默认 STA/AP netif，配置 SoftAP 地址，并注册 Wi-Fi/IP
- * 事件处理器。该函数应在启动 STA 或进入配网模式前调用；重复调用会直接返回
- * ESP_OK。
- */
-esp_err_t wifi_manager_init(void);
-
-/**
  * @brief 使用给定 Wi-Fi 配置启动普通 STA 模式。
  *
  * @param cfg 已从 NVS 读取并校验通过的 Wi-Fi 配置，不能为 NULL。
  *
- * 该函数只负责按调用方提供的配置连接路由器。连接失败时会返回错误，由上层决定
- * 是否回落到配网模式。
+ * 该函数会初始化 Wi-Fi 管理器内部资源，并按调用方提供的配置连接路由器。
+ * 连接失败时会返回错误，由上层决定是否进入错误状态。
  */
-esp_err_t wifi_manager_start_sta(const wifi_cfg_t *cfg);
+esp_err_t wifi_manager_start_normal(const wifi_cfg_t *cfg);
 
 /**
  * @brief 开启配网页面模式。
  *
- * 该函数会生成包含 MAC 后两字节的 SoftAP SSID，切换到 AP+STA 模式，并启动
- * Wi-Fi。适合在没有配置、连接失败或用户长按按键清除配置后调用。
+ * 该函数会初始化 Wi-Fi 管理器内部资源，生成包含 MAC 后两字节的 SoftAP SSID，
+ * 切换到 AP+STA 模式，并启动 Wi-Fi。
  */
-esp_err_t wifi_manager_start_portal(void);
+esp_err_t wifi_manager_start_config(void);
 
 /**
  * @brief 验证新的 Wi-Fi 凭据。

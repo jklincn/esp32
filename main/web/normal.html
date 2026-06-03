@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="color-scheme" content="light">
+    <title>SMS Gateway</title>
+    <style>
+        :root {
+            --bg: #f2f3f5;
+            --surface: #fff;
+            --text: #111827;
+            --muted: #6b7280;
+            --line: #d9dde4;
+            --ok: #16884a;
+            --bad: #b42318;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, "Noto Sans SC", sans-serif;
+            font-size: 16px;
+            line-height: 1.35;
+        }
+
+        main {
+            width: min(430px, 100%);
+            min-height: 100vh;
+            margin: 0 auto;
+            padding: 22px 14px 28px;
+        }
+
+        header {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            line-height: 1.25;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+
+        .subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .panel {
+            overflow: hidden;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 12px;
+            align-items: center;
+            min-height: 52px;
+            padding: 10px 14px;
+        }
+
+        .row + .row {
+            border-top: 1px solid var(--line);
+        }
+
+        .label {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .value {
+            min-width: 0;
+            font-weight: 700;
+            overflow-wrap: anywhere;
+            text-align: right;
+        }
+
+        .ok {
+            color: var(--ok);
+        }
+
+        .bad {
+            color: var(--bad);
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <h1>SMS Gateway</h1>
+            <p class="subtitle">正常运行模式</p>
+        </header>
+
+        <section class="panel" aria-label="设备状态">
+            <div class="row">
+                <span class="label">Wi-Fi</span>
+                <span id="wifiStatus" class="value">读取中</span>
+            </div>
+            <div class="row">
+                <span class="label">IP 地址</span>
+                <span id="staIp" class="value">--</span>
+            </div>
+            <div class="row">
+                <span class="label">配网热点</span>
+                <span id="apStatus" class="value">--</span>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const $ = id => document.getElementById(id);
+
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/status', {cache: 'no-store'});
+                const status = await response.json();
+
+                $('wifiStatus').textContent = status.sta_connected ? '已连接' : '未连接';
+                $('wifiStatus').className = 'value ' + (status.sta_connected ? 'ok' : 'bad');
+                $('staIp').textContent = status.sta_ip || '--';
+                $('apStatus').textContent = status.mode === 'config' ? '开启' : '关闭';
+            } catch (err) {
+                $('wifiStatus').textContent = '状态读取失败';
+                $('wifiStatus').className = 'value bad';
+            }
+        }
+
+        loadStatus();
+        setInterval(loadStatus, 5000);
+    </script>
+</body>
+</html>

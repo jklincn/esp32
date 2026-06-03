@@ -12,19 +12,11 @@
 #define SYSTEM_LED_GPIO GPIO_NUM_8
 #define SYSTEM_LED_RESOLUTION_HZ 10000000
 #define SYSTEM_LED_MEM_BLOCK_SYMBOLS 64
-#define SYSTEM_LED_BRIGHTNESS 16
+#define SYSTEM_LED_BRIGHTNESS 10
 #define SYSTEM_LED_TASK_PERIOD_MS 50
-#define SYSTEM_LED_GREEN_BLINK_MS 600
+#define SYSTEM_LED_BLINK_MS 600
 
 static const char *TAG = "[led]";
-
-typedef enum {
-    SYSTEM_LED_EFFECT_OFF,
-    SYSTEM_LED_EFFECT_GREEN,
-    SYSTEM_LED_EFFECT_GREEN_BLINK,
-    SYSTEM_LED_EFFECT_BLUE,
-    SYSTEM_LED_EFFECT_RED,
-} system_led_effect_t;
 
 static led_strip_handle_t s_led_strip;
 static SemaphoreHandle_t s_led_lock;
@@ -48,6 +40,7 @@ static esp_err_t write_effect(system_led_effect_t effect) {
         case SYSTEM_LED_EFFECT_GREEN_BLINK:
             return write_rgb(0, SYSTEM_LED_BRIGHTNESS, 0);
         case SYSTEM_LED_EFFECT_BLUE:
+        case SYSTEM_LED_EFFECT_BLUE_BLINK:
             return write_rgb(0, 0, SYSTEM_LED_BRIGHTNESS);
         case SYSTEM_LED_EFFECT_RED:
             return write_rgb(SYSTEM_LED_BRIGHTNESS, 0, 0);
@@ -57,7 +50,8 @@ static esp_err_t write_effect(system_led_effect_t effect) {
 }
 
 static bool is_blinking_effect(system_led_effect_t effect) {
-    return effect == SYSTEM_LED_EFFECT_GREEN_BLINK;
+    return effect == SYSTEM_LED_EFFECT_GREEN_BLINK ||
+           effect == SYSTEM_LED_EFFECT_BLUE_BLINK;
 }
 
 static void system_led_task(void *arg) {
@@ -85,7 +79,7 @@ static void system_led_task(void *arg) {
             }
         } else if (is_blinking_effect(active_effect)) {
             uint32_t elapsed_ms = pdTICKS_TO_MS(now - last_toggle_tick);
-            if (elapsed_ms >= SYSTEM_LED_GREEN_BLINK_MS) {
+            if (elapsed_ms >= SYSTEM_LED_BLINK_MS) {
                 blink_on = !blink_on;
                 last_toggle_tick = now;
                 esp_err_t err = write_effect(
@@ -144,7 +138,7 @@ esp_err_t system_led_init(void) {
     return ESP_OK;
 }
 
-static esp_err_t set_effect(system_led_effect_t effect) {
+esp_err_t system_led_set(system_led_effect_t effect) {
     if (s_led_strip == NULL || s_led_lock == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -155,24 +149,4 @@ static esp_err_t set_effect(system_led_effect_t effect) {
     xSemaphoreGive(s_led_lock);
 
     return err;
-}
-
-esp_err_t system_led_set_off(void) {
-    return set_effect(SYSTEM_LED_EFFECT_OFF);
-}
-
-esp_err_t system_led_set_green(void) {
-    return set_effect(SYSTEM_LED_EFFECT_GREEN);
-}
-
-esp_err_t system_led_set_green_blink(void) {
-    return set_effect(SYSTEM_LED_EFFECT_GREEN_BLINK);
-}
-
-esp_err_t system_led_set_blue(void) {
-    return set_effect(SYSTEM_LED_EFFECT_BLUE);
-}
-
-esp_err_t system_led_set_red(void) {
-    return set_effect(SYSTEM_LED_EFFECT_RED);
 }

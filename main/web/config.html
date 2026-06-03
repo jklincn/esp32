@@ -330,7 +330,7 @@
     <main>
         <header>
             <h1>SMS Gateway</h1>
-            <p id="statusLine" class="status-line">正在读取设备状态</p>
+            <p class="status-line">配置设备 Wi-Fi</p>
         </header>
 
         <div class="section-head">
@@ -364,7 +364,6 @@
         const $ = id => document.getElementById(id);
         let selectedNetwork = null;
         let waitingForNetworkSwitch = false;
-        let statusTimer = null;
         let scanRequestInFlight = false;
         let scanPollingTimer = null;
         let backendScanning = false;
@@ -522,24 +521,6 @@
             }
         }
 
-        async function loadStatus() {
-            try {
-                const response = await fetch('/api/status', {cache: 'no-store'});
-                const status = await response.json();
-                if (status.sta_connected) {
-                    $('statusLine').textContent = '已连接 · ' + status.sta_ip;
-                } else if (status.ap_enabled) {
-                    $('statusLine').textContent = '配网模式 · 连接后设备热点会自动关闭';
-                } else {
-                    $('statusLine').textContent = '未连接';
-                }
-            } catch (err) {
-                if (!waitingForNetworkSwitch) {
-                    $('statusLine').textContent = '状态读取失败';
-                }
-            }
-        }
-
         $('refreshBtn').addEventListener('click', () => loadNetworks(true));
         $('cancelBtn').addEventListener('click', closePasswordSheet);
         $('passwordSheet').addEventListener('click', event => {
@@ -569,10 +550,6 @@
                 if (result.ok) {
                     const url = 'http://' + result.ip;
                     waitingForNetworkSwitch = true;
-                    if (statusTimer) {
-                        clearInterval(statusTimer);
-                        statusTimer = null;
-                    }
                     if (scanPollingTimer) {
                         clearTimeout(scanPollingTimer);
                         scanPollingTimer = null;
@@ -594,15 +571,9 @@
                 setMessage('请求失败：' + err.message, 'bad');
                 button.disabled = false;
             }
-
-            if (!waitingForNetworkSwitch) {
-                loadStatus();
-            }
         });
 
-        loadStatus();
         loadNetworks(false);
-        statusTimer = setInterval(loadStatus, 5000);
     </script>
 </body>
 </html>

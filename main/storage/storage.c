@@ -39,6 +39,11 @@ bool app_nvs_is_wifi_config_unavailable(esp_err_t err) {
            err == ESP_ERR_NVS_TYPE_MISMATCH || err == ESP_ERR_INVALID_STATE;
 }
 
+esp_err_t app_nvs_check_wifi_config(void) {
+    wifi_cfg_t cfg;
+    return app_nvs_load_wifi(&cfg);
+}
+
 esp_err_t app_nvs_load_wifi(wifi_cfg_t *cfg) {
     if (cfg == NULL) {
         ESP_LOGE(TAG, "load_wifi called with NULL cfg");
