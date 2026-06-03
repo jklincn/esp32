@@ -18,20 +18,19 @@
 static const char *TAG = "[button]";
 static TaskHandle_t s_button_task;
 
-static void log_status_led_error(esp_err_t err, const char *state) {
+static void log_system_led_error(esp_err_t err, const char *state) {
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "set status LED %s failed: %s", state,
+        ESP_LOGW(TAG, "set system LED %s failed: %s", state,
                  esp_err_to_name(err));
     }
 }
 
-static void set_status_led_normal(void) {
-    log_status_led_error(status_led_set_normal(), "normal");
+static void set_system_led_green(void) {
+    log_system_led_error(system_led_set_green(), "green");
 }
 
-static void set_status_led_clear_ready(bool on) {
-    log_status_led_error(status_led_set_clear_ready(on),
-                         on ? "clear ready" : "off");
+static void set_system_led_blue(void) {
+    log_system_led_error(system_led_set_blue(), "blue");
 }
 
 static bool button_is_pressed(void) {
@@ -70,7 +69,7 @@ static void button_task(void *arg) {
             // 记录按下开始时间。
             press_start_tick = now;
             clear_wifi_ready = false;
-            set_status_led_normal();
+            set_system_led_green();
 
             ESP_LOGI(TAG, "BOOT button pressed");
         }
@@ -79,7 +78,7 @@ static void button_task(void *arg) {
             uint32_t held_ms = pdTICKS_TO_MS(now - press_start_tick);
             if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
                 clear_wifi_ready = true;
-                set_status_led_clear_ready(true);
+                set_system_led_blue();
                 ESP_LOGI(TAG,
                          "BOOT button held for 5s, release to clear Wi-Fi "
                          "config and restart");
@@ -96,7 +95,7 @@ static void button_task(void *arg) {
             // 长按 5 秒：清除 Wi-Fi 配置并重启。
             if (held_ms >= BUTTON_CLEAR_WIFI_MS) {
                 clear_wifi_ready = false;
-                set_status_led_clear_ready(false);
+                set_system_led_green();
 
                 ESP_LOGW(TAG,
                          "clearing Wi-Fi config by BOOT button long press");
@@ -121,7 +120,7 @@ static void button_task(void *arg) {
             }
 
             clear_wifi_ready = false;
-            set_status_led_normal();
+            set_system_led_green();
         }
 
         // 保存当前状态，下一轮用来判断状态变化。

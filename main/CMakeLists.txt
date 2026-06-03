@@ -56,8 +56,8 @@ endfunction()
 escape_c_string("${SMS_GATEWAY_API_URL_VALUE}" SMS_GATEWAY_API_URL_C)
 escape_c_string("${SMS_GATEWAY_API_TOKEN_VALUE}" SMS_GATEWAY_API_TOKEN_C)
 configure_file(
-    "${CMAKE_CURRENT_LIST_DIR}/notify/notify_config.h.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/notify_config.h"
+    "${CMAKE_CURRENT_LIST_DIR}/client/client_config.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/client_config.h"
     @ONLY
 )
 
@@ -66,7 +66,7 @@ idf_component_register(
         "app/main.c"
         "button/button.c"
         "led/led.c"
-        "notify/notify.c"
+        "client/client.c"
         "storage/storage.c"
         "web/web.c"
         "wifi/wifi.c"

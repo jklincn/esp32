@@ -1,10 +1,10 @@
-#include "notify/notify.h"
+#include "client/client.h"
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
+#include "client_config.h"
 #include "esp_crt_bundle.h"
 #include "esp_err.h"
 #include "esp_http_client.h"
@@ -12,12 +12,11 @@
 #include "esp_mac.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "notify_config.h"
 #include "wifi/wifi.h"
 
-#define SERVER_NOTIFY_TASK_STACK 8192
-#define SERVER_NOTIFY_TASK_PRIORITY 4
-#define SERVER_NOTIFY_TIMEOUT_MS 8000
+#define SERVER_CLIENT_TASK_STACK 8192
+#define SERVER_CLIENT_TASK_PRIORITY 4
+#define SERVER_CLIENT_TIMEOUT_MS 8000
 #define SERVER_HEARTBEAT_INTERVAL_MS 5000
 #define SERVER_HEARTBEAT_INITIAL_DELAY_MS 1000
 #define SERVER_API_URL_MAX_LEN 256
@@ -25,18 +24,12 @@
 #define SERVER_MESSAGES_PATH "/messages"
 #define SERVER_HEARTBEAT_PATH "/devices/heartbeat"
 
-static const char *TAG = "[notify]";
+static const char *TAG = "[client]";
 
-static bool is_configured(void) {
-    return SMS_GATEWAY_API_URL[0] != '\0' && SMS_GATEWAY_API_TOKEN[0] != '\0';
-}
-
-esp_err_t server_notify_check_configured(void) {
-    if (is_configured()) {
+esp_err_t client_check_configured(void) {
+    if (SMS_GATEWAY_API_URL[0] != '\0' && SMS_GATEWAY_API_TOKEN[0] != '\0') {
         return ESP_OK;
     }
-
-    ESP_LOGE(TAG, "SMS Gateway API URL or token is empty");
     return ESP_ERR_INVALID_STATE;
 }
 
@@ -49,8 +42,8 @@ static esp_err_t build_device_id(char *device_id, size_t device_id_size) {
     }
 
     int written = snprintf(device_id, device_id_size,
-                           "esp32c6-%02X%02X%02X%02X%02X%02X", mac[0],
-                           mac[1], mac[2], mac[3], mac[4], mac[5]);
+                           "esp32c6-%02X%02X%02X%02X%02X%02X", mac[0], mac[1],
+                           mac[2], mac[3], mac[4], mac[5]);
     if (written < 0 || (size_t)written >= device_id_size) {
         return ESP_ERR_INVALID_SIZE;
     }
@@ -65,62 +58,12 @@ static esp_err_t build_api_url(const char *path, char *url, size_t url_size) {
     }
 
     size_t path_len = strlen(path);
-    if (base_len == 0 || path[0] != '/' ||
-        base_len + path_len + 1 > url_size) {
+    if (base_len == 0 || path[0] != '/' || base_len + path_len + 1 > url_size) {
         return ESP_ERR_INVALID_SIZE;
     }
 
     memcpy(url, SMS_GATEWAY_API_URL, base_len);
     memcpy(url + base_len, path, path_len + 1);
-    return ESP_OK;
-}
-
-static esp_err_t build_iso_timestamp(char *timestamp, size_t timestamp_size) {
-    time_t now = time(NULL);
-    struct tm tm = {0};
-    gmtime_r(&now, &tm);
-
-    int written = snprintf(timestamp, timestamp_size,
-                           "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
-                           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-                           tm.tm_hour, tm.tm_min, tm.tm_sec);
-    if (written < 0 || (size_t)written >= timestamp_size) {
-        return ESP_ERR_INVALID_SIZE;
-    }
-
-    return ESP_OK;
-}
-
-static esp_err_t build_startup_payload(char *payload, size_t payload_size) {
-    char device_id[sizeof("esp32c6-FFFFFFFFFFFF")] = {0};
-    esp_err_t err = build_device_id(device_id, sizeof(device_id));
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    wifi_manager_status_t status;
-    wifi_manager_get_status(&status);
-
-    char timestamp[sizeof("2026-06-03T12:34:56.000Z")] = {0};
-    err = build_iso_timestamp(timestamp, sizeof(timestamp));
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    int written = snprintf(
-        payload, payload_size,
-        "{\"senderNumber\":\"system\","
-        "\"senderName\":\"SMS Gateway\","
-        "\"body\":\"SMS Gateway connected to Wi-Fi\","
-        "\"sentAt\":\"%s\","
-        "\"receivedAt\":\"%s\","
-        "\"deviceId\":\"%s\","
-        "\"rawPayload\":{\"event\":\"startup_connected\",\"ip\":\"%s\"}}",
-        timestamp, timestamp, device_id, status.sta_ip);
-    if (written < 0 || (size_t)written >= payload_size) {
-        return ESP_ERR_INVALID_SIZE;
-    }
-
     return ESP_OK;
 }
 
@@ -146,7 +89,7 @@ static esp_err_t send_json_post(const char *url, const char *payload,
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = SERVER_NOTIFY_TIMEOUT_MS,
+        .timeout_ms = SERVER_CLIENT_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
 
@@ -207,24 +150,6 @@ static esp_err_t send_json_post(const char *url, const char *payload,
     return ESP_OK;
 }
 
-static esp_err_t send_startup_post(void) {
-    char url[SERVER_API_URL_MAX_LEN] = {0};
-    esp_err_t err = build_api_url(SERVER_MESSAGES_PATH, url, sizeof(url));
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "build startup URL failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    char payload[384] = {0};
-    err = build_startup_payload(payload, sizeof(payload));
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "build startup payload failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    return send_json_post(url, payload, "startup notification");
-}
-
 static esp_err_t send_heartbeat_post(void) {
     char url[SERVER_API_URL_MAX_LEN] = {0};
     esp_err_t err = build_api_url(SERVER_HEARTBEAT_PATH, url, sizeof(url));
@@ -242,18 +167,6 @@ static esp_err_t send_heartbeat_post(void) {
     }
 
     return send_json_post(url, payload, "heartbeat");
-}
-
-static void server_notify_task(void *arg) {
-    (void)arg;
-
-    esp_err_t err = send_startup_post();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "startup notification not sent: %s",
-                 esp_err_to_name(err));
-    }
-
-    vTaskDelete(NULL);
 }
 
 static void server_heartbeat_task(void *arg) {
@@ -276,22 +189,10 @@ static void server_heartbeat_task(void *arg) {
     }
 }
 
-esp_err_t server_notify_startup_connected(void) {
-    BaseType_t ok = xTaskCreate(server_notify_task, "server_notify",
-                                SERVER_NOTIFY_TASK_STACK, NULL,
-                                SERVER_NOTIFY_TASK_PRIORITY, NULL);
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "create startup notification task failed");
-        return ESP_ERR_NO_MEM;
-    }
-
-    return ESP_OK;
-}
-
-esp_err_t server_notify_start_heartbeat(void) {
+esp_err_t client_start_heartbeat(void) {
     BaseType_t ok = xTaskCreate(server_heartbeat_task, "server_heartbeat",
-                                SERVER_NOTIFY_TASK_STACK, NULL,
-                                SERVER_NOTIFY_TASK_PRIORITY, NULL);
+                                SERVER_CLIENT_TASK_STACK, NULL,
+                                SERVER_CLIENT_TASK_PRIORITY, NULL);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "create heartbeat task failed");
         return ESP_ERR_NO_MEM;
